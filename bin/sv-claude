@@ -1,0 +1,75 @@
+#!/bin/bash
+# Run Claude Code in SandVault on a copy of the current repository.
+# Afterwards, show what Claude changed and copy it back if you agree.
+# Run it from the repository's top folder, for example in VS Code's terminal.
+set -euo pipefail
+
+SRC="$(pwd -P)"
+SHARED="/Users/Shared/sv-$USER"
+
+[ -d "$SRC/.git" ] || { echo "Run this from a repository's top folder." >&2; exit 1; }
+[ -d "$SHARED" ] || { echo "SandVault isn't set up for $USER. See docs/macos.md." >&2; exit 1; }
+
+# One copy per folder: its name plus a short hash of its full path.
+COPY="$SHARED/work/$(basename "$SRC")-$(printf '%s' "$SRC" | shasum | cut -c1-8)"
+
+# rsync runs as you. It copies the executable bit, but no owners, groups or ACLs:
+# files in your folder stay yours, and files in the copy get the shared folder's
+# ACLs, which let both you and SandVault's account read and write them.
+# -O skips folder times: only a folder's owner may set them, and SandVault's
+# account owns the folders it creates.
+RSYNC=(/usr/bin/rsync -rlt -O --executability --safe-links)
+
+# Never copied into SandVault: secrets.
+SECRETS=(--include=.env.example --exclude=.env --exclude='.env.*')
+
+# Never copied back: files that tools run code from on their own, such as git,
+# VS Code, direnv and package managers, and Claude Code's own project settings.
+AUTORUN=(
+  --exclude=.git --exclude=.githooks --exclude=.husky --exclude=.gitmodules
+  --exclude=.claude --exclude=.mcp.json
+  --exclude=.vscode --exclude='*.code-workspace' --exclude=.idea
+  --exclude=.devcontainer --exclude=.devcontainer.json
+  --exclude=.envrc --exclude=.direnv --exclude=.tool-versions
+  --exclude=mise.toml --exclude=.mise.toml
+  --exclude=node_modules --exclude=.venv --exclude=venv
+  --exclude=.npmrc --exclude=.yarnrc --exclude=.yarnrc.yml --exclude=.yarn
+  --exclude=.pnp.cjs --exclude=.pnp.loader.mjs --exclude=.pnpmfile.cjs
+  --exclude=bunfig.toml --exclude=.bunfig.toml
+  --exclude=.cargo --exclude=.mvn
+  --exclude=gradle-wrapper.properties --exclude=maven-wrapper.properties
+  --exclude=.bazelrc --exclude=.bazelversion --exclude=.bazeliskrc
+  --exclude=.pre-commit-config.yaml
+  --exclude=lefthook.yml --exclude=lefthook.yaml
+  --exclude=.lefthook.yml --exclude=.lefthook.yaml
+)
+
+# Exit codes 23 and 24 mean some files were skipped; rsync names them above.
+rsync_partial_ok() {
+    "$@" || { rc=$?; [ "$rc" -eq 23 ] || [ "$rc" -eq 24 ] || exit "$rc"; echo "Some files were skipped." >&2; }
+}
+
+# 1. Copy your folder in. The copy then matches it exactly.
+mkdir -p "$COPY"
+echo "Copying $SRC to $COPY"
+rsync_partial_ok "${RSYNC[@]}" --delete "${SECRETS[@]}" "$SRC/" "$COPY/"
+
+# 2. Run Claude on the copy.
+sv -x claude "$COPY" || true
+
+# 3. Copy Claude's changes back, after you agree. --update keeps files you
+# changed during the session. Nothing in your folder is deleted.
+BACK=("${RSYNC[@]}" --update "${AUTORUN[@]}" "${SECRETS[@]}" "$COPY/" "$SRC/")
+CHANGES="$("${BACK[@]}" --dry-run --itemize-changes)"
+if [ -z "$CHANGES" ]; then
+    echo "No changes to copy back."
+    exit 0
+fi
+echo "$CHANGES"
+read -r -p "Copy these changes into $SRC? [y/N] " answer
+if [ "$answer" != y ] && [ "$answer" != Y ]; then
+    echo "Nothing copied. The next start replaces the copy."
+    exit 0
+fi
+rsync_partial_ok "${BACK[@]}"
+echo "Done. Review the changes in VS Code's Source Control view before you run them."

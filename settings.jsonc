@@ -1,0 +1,112 @@
+// Claude Code safety settings. See README.md.
+// Claude Code reads strict JSON only. Install without the comment lines:
+//   grep -v '^[[:space:]]*//' settings.jsonc > ~/.claude/settings.json
+{
+  // Lets your editor check the keys. The schema is behind Claude Code:
+  // if your editor flags "blockReadsOutsideWorkingDirectories", keep it.
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "permissions": {
+    // Start in auto mode: a classifier approves routine actions and blocks risky ones.
+    "defaultMode": "auto",
+    // Refuse bypass mode (--dangerously-skip-permissions): no prompts, no safety checks.
+    "disableBypassPermissionsMode": "disable",
+    // Claude's file tools read only the project. Shell commands can't read
+    // home folders or mounted drives, except the project.
+    "blockReadsOutsideWorkingDirectories": true,
+
+    "deny": [
+      // Block reads of SSH keys and AWS credentials.
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      // Block reads of .env files in the project. .env.example stays readable.
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(!.env.example)"
+    ],
+    "ask": [
+      // Ask before any command runs outside the sandbox, in every mode.
+      "Bash(dangerouslyDisableSandbox:true)",
+      // Ask before docker exec: it can run anything in any container.
+      "Bash(docker exec *)"
+    ],
+    "allow": [
+      // Read-only docker commands run without asking.
+      "Bash(docker ps *)",
+      "Bash(docker logs *)"
+    ]
+  },
+
+  "sandbox": {
+    // Run shell commands in the OS sandbox: Seatbelt on macOS, bubblewrap on Linux and WSL2.
+    "enabled": true,
+    // If the sandbox can't start, Claude Code exits instead of running commands unsandboxed.
+    // On native Windows it always exits: use WSL2.
+    "failIfUnavailable": true,
+    // Claude may retry a blocked command outside the sandbox. The ask rule above
+    // makes you approve each retry.
+    "allowUnsandboxedCommands": true,
+    // docker doesn't work in the sandbox. These run outside it, with your full access.
+    "excludedCommands": ["docker ps *", "docker logs *", "docker exec *"],
+
+    "filesystem": {
+      // npm keeps its cache in your home folder, which the read block hides.
+      // Without these, npm install fails in the sandbox.
+      "allowRead": ["~/.npm"],
+      "allowWrite": ["~/.npm"]
+    },
+
+    "network": {
+      // The only hosts shell commands can reach: GitHub, npm, PyPI.
+      // Every allowed host can receive data. Keep the list short.
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "*.githubusercontent.com",
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ],
+      // Refuse all other hosts without asking. Repository settings can't add hosts.
+      "strictAllowlist": true
+    },
+
+    "credentials": {
+      // Remove these secrets from the environment of sandboxed commands.
+      "envVars": [
+        { "name": "GITHUB_TOKEN", "mode": "deny" },
+        { "name": "GH_TOKEN", "mode": "deny" },
+        { "name": "NPM_TOKEN", "mode": "deny" },
+        { "name": "ANTHROPIC_API_KEY", "mode": "deny" },
+        { "name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny" },
+        { "name": "AWS_ACCESS_KEY_ID", "mode": "deny" },
+        { "name": "AWS_SECRET_ACCESS_KEY", "mode": "deny" },
+        { "name": "AWS_SESSION_TOKEN", "mode": "deny" }
+      ]
+    }
+  },
+
+  "env": {
+    // Turn off usage metrics and session surveys. This also turns off feature flags,
+    // so Remote Control and a few extras stop working. Updates stay on.
+    "DISABLE_TELEMETRY": "1",
+    // Turn off error reports.
+    "DISABLE_ERROR_REPORTING": "1",
+    // Turn off /feedback, /bug and /share, which upload the conversation, including code.
+    "DISABLE_FEEDBACK_COMMAND": "1"
+  },
+
+  // Start every session on Opus 5.5 at high effort. Fable models can bill usage credits.
+  // In SandVault, a /model or /effort change lasts one session: SandVault restores this file at every start.
+  "model": "claude-opus-5-5",
+  "modelSettings": {
+    "claude-opus-5-5": { "effortLevel": "high" }
+  },
+
+  // Show each tool call in full, so you see what Claude does.
+  "viewMode": "verbose",
+  // Show summaries of Claude's reasoning.
+  "showThinkingSummaries": true,
+  // Don't connect to Remote Control (driving this session from claude.ai or the mobile app) at startup.
+  "remoteControlAtStartup": false
+}

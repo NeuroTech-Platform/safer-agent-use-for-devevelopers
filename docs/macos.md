@@ -1,0 +1,171 @@
+# macOS
+
+Claude Code's sandbox uses Seatbelt, which is built into macOS. There is nothing to install for it.
+
+On top of it, Claude Code runs inside [SandVault](https://github.com/webcoyote/sandvault), as a separate macOS account.
+
+## What SandVault adds
+
+Claude Code's sandbox covers shell commands only. SandVault runs all of Claude Code as a separate account, so what the sandbox doesn't cover is still kept out of your home folder:
+
+- Claude's file edits, hooks, MCP servers and plugins can't reach your home folder: your other projects, SSH keys, cloud credentials and browser data.
+- Commands that run outside Claude Code's sandbox, such as approved retries and `docker`, run as that account, not as you.
+- The account has its own keychain. It can't read yours.
+- The account has no admin rights.
+
+Limits:
+
+- SandVault doesn't limit the network. Claude Code's sandbox does that, for shell commands.
+- Remote Control and claude.ai connectors don't work in SandVault. Claude logs in there with a token that can only make model requests ([step 3](#3-log-in)).
+
+## 1. Install SandVault
+
+> [!IMPORTANT]
+> **Daily account without admin rights?** Skip to [Daily account without admin rights](#daily-account-without-admin-rights).
+
+```bash
+brew install sandvault
+sv build
+```
+
+`sv build` creates the account `sandvault-$USER` and the shared folder `/Users/Shared/sv-$USER`. It asks for your password.
+
+SandVault's account runs Claude Code from Homebrew, which doesn't update it automatically. Keep it current:
+
+```bash
+brew upgrade claude-code
+```
+
+Continue with [2. Install the settings](#2-install-the-settings).
+
+### Daily account without admin rights
+
+SandVault's build needs admin rights, and its files belong to the admin account that installed it. So the admin account builds SandVault for the daily account. The build adds sudo rules that let the daily account run only what `sv` needs, so daily use needs no admin rights.
+
+**a. Admin account, once.** Install SandVault and Claude Code. Create SandVault's group for the daily account and join it, so the build can write into the daily account's shared folder. Replace `jdoe` with the daily account's short name:
+
+```bash
+DEV=jdoe
+brew install sandvault claude-code
+sudo dseditgroup -o create "sandvault-$DEV"
+sudo dseditgroup -o edit -a "$USER" -t user "sandvault-$DEV"
+```
+
+**b. Admin account, in a new Terminal window. Repeat after each `brew upgrade sandvault`.** Build SandVault for the daily account, then give that account SandVault's SSH key and install marker:
+
+```bash
+DEV=jdoe
+SVHOME="$HOME/sandvault-for-$DEV"
+mkdir -p "$SVHOME"
+env USER="$DEV" HOME="$SVHOME" GIT_CONFIG_GLOBAL="/Users/$DEV/.gitconfig" sv --rebuild build
+
+KEYS="$(brew --prefix sandvault)/libexec/guest/home/.ssh"
+chmod 755 "$KEYS" && chmod 644 "$KEYS/authorized_keys"
+sudo install -d -o "$DEV" -g staff -m 700 "/Users/$DEV/.ssh"
+sudo install -o "$DEV" -g staff -m 600 "$SVHOME/.ssh/id_ed25519_sandvault" "/Users/$DEV/.ssh/"
+sudo install -o "$DEV" -g staff -m 644 "$SVHOME/.ssh/id_ed25519_sandvault.pub" "/Users/$DEV/.ssh/"
+sudo -u "$DEV" mkdir -p "/Users/$DEV/.config/codeofhonor/sandvault"
+sudo -u "$DEV" touch "/Users/$DEV/.config/codeofhonor/sandvault/install"
+```
+
+- `USER` makes the build target the daily account.
+- `HOME` keeps the build's key and state in their own folder.
+- `GIT_CONFIG_GLOBAL` passes the daily account's git name and email to SandVault's account.
+- `sv` compares SandVault's key file on every start, so the daily account must be able to read it.
+
+**c. Daily account, once.** On Apple silicon, add Homebrew to your PATH:
+
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+The admin account runs the updates. SandVault's account runs the admin's Homebrew copy of Claude Code, so `brew upgrade claude-code` reaches it at its next start. After `brew upgrade sandvault`, repeat step b.
+
+These steps are written for SandVault 1.32.0.
+
+## 2. Install the settings
+
+SandVault's account has its own home folder, so your `~/.claude/settings.json` doesn't reach it. At each start, SandVault copies `/Users/Shared/sv-$USER/user/` into that home folder. In your daily account, from this repository's folder:
+
+```bash
+mkdir -p "/Users/Shared/sv-$USER/user/.claude"
+grep -v '^[[:space:]]*//' settings.jsonc > "/Users/Shared/sv-$USER/user/.claude/settings.json"
+```
+
+Repeat this after every change to `settings.jsonc`.
+
+> [!NOTE]
+> Claude Code in VS Code, or started with `claude` in a terminal, runs as you, outside SandVault. Install the settings in your own account too: [README](../README.md#install), step 2.
+
+## 3. Log in
+
+Claude Code can't save a login in SandVault's account: the keychain write fails with `Couldn't save your login`. Give the account a login token instead. In your daily account, run:
+
+```bash
+claude setup-token
+```
+
+It opens your browser, then prints a token that is valid for one year. Run these two lines, paste the token at the empty prompt, and press Enter:
+
+```bash
+read -rs TOKEN
+echo "export CLAUDE_CODE_OAUTH_TOKEN='$TOKEN'" >> "/Users/Shared/sv-$USER/user/.zshenv"
+```
+
+SandVault's account loads that file at every start. The settings hide the token from Claude's shell commands. When the token expires, repeat this step.
+
+The token uses your subscription but can only make model requests. In SandVault, claude.ai connectors and Remote Control don't work. MCP servers you configure yourself still do.
+
+`claude setup-token` needs a claude.ai account. With a Console account, put `export ANTHROPIC_API_KEY='your-key'` in that file instead.
+
+## 4. Install `sv-claude`
+
+[`bin/sv-claude`](../bin/sv-claude) runs Claude in SandVault on a copy of your repository, and copies Claude's changes back after you agree. Install it in your daily account, from this repository's folder:
+
+```bash
+mkdir -p ~/.local/bin
+install -m 755 bin/sv-claude ~/.local/bin/
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
+```
+
+Open a new terminal. To update `sv-claude`, run the `install` line again.
+
+## 5. Start Claude
+
+In VS Code's terminal, at your repository's top folder:
+
+```bash
+sv-claude
+```
+
+- Before each session, `sv-claude` copies your folder into `/Users/Shared/sv-$USER/work/`. `.env` files stay out.
+- After the session, it lists Claude's changes and asks before copying them back. It never deletes files in your folder, and it keeps files you changed during the session.
+- It never copies back files that tools run code from on their own, such as `.git`, `.vscode`, `.envrc`, `.claude` and `node_modules`.
+- Review the changes in VS Code's Source Control view before you run them. Tools that watch files, such as dev servers, run new code right away.
+- Claude's commits stay in the copy. Commit in your own folder.
+- `sv-claude` starts SandVault with `-x`, which turns off SandVault's own sandbox. macOS can't run one sandbox inside another, so without `-x` Claude Code's sandbox can't start. The separate account still keeps your home folder out of reach.
+- SandVault starts Claude with `--dangerously-skip-permissions`. The settings refuse that flag, so the session runs in auto mode.
+- Sessions start on Opus 5.5 at high effort. A `/model` or `/effort` change lasts one session, because SandVault restores the settings at every start. To change the default, edit `settings.jsonc` and repeat [step 2](#2-install-the-settings).
+- Don't start Claude with `sv` from your own folder. SandVault's account can't read it, so the session silently starts in `/Users/Shared/sv-$USER`, which holds the settings SandVault copies in. Claude could change them there.
+- Don't open the copy in VS Code, or run git in it from your own account. SandVault's account can change its `.git/config` so that git runs commands as you.
+
+## 6. Verify
+
+In a session started with `sv-claude`, run the checks in the [README](../README.md#verify).
+
+## What `-x` costs
+
+SandVault's sandbox also blocks external drives (`/Volumes`) and world-writable files. Without it, Claude's file edits, hooks and MCP servers can reach them. Shell commands are still blocked by Claude Code's sandbox.
+
+## When something fails
+
+| Problem | Fix |
+| --- | --- |
+| `sv-claude: command not found` | Open a new terminal after [step 4](#4-install-sv-claude). |
+| `Couldn't save your login` | SandVault's account can't save a login. Give it a token: [step 3](#3-log-in). |
+| Every command fails with `sandbox_apply: Operation not permitted` | You started without `-x`. Quit and run `sv-claude`. |
+| A keychain password popup, or `Permission denied` in the shared folder | Files there have the wrong permissions. Run `sv --rebuild build`. On a daily account, the admin repeats [step b](#daily-account-without-admin-rights). |
+| Daily account: `sv` asks for a password, or fails with `Permission denied` on `guest/home/.ssh` | The admin repeats [step b](#daily-account-without-admin-rights), for example after a SandVault upgrade. |
+| `gh`, `gcloud` or `terraform` fail TLS verification | Approve the retry outside the sandbox. |
+| `open` or `osascript` fail with error `-600` | The sandbox blocks Apple Events. Approve the retry outside the sandbox. |
