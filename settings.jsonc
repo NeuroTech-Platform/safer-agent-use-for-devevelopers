@@ -22,13 +22,29 @@
       // Block reads of .env files in the project. .env.example stays readable.
       "Read(.env)",
       "Read(.env.*)",
-      "Read(!.env.example)"
+      "Read(!.env.example)",
+      // Claude can't change its own settings: yours, ~/.claude.json (folder trust,
+      // MCP servers), a project's, or SandVault's copy and login token.
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude.json)",
+      "Edit(**/.claude/settings.json)",
+      "Edit(**/.claude/settings.local.json)",
+      "Edit(//Users/Shared/sv-*/user/**)",
+      // Claude can't change your personal instructions, which load in every session.
+      "Edit(~/.claude/CLAUDE.md)",
+      "Edit(~/.claude/rules/**)",
+      // Claude can't change sv-claude, which runs as you: its source, and anything in
+      // ~/.local/bin, which is on your PATH.
+      "Edit(**/bin/sv-claude)",
+      "Edit(~/.local/bin/**)"
     ],
     "ask": [
       // Ask before any command runs outside the sandbox, in every mode.
       "Bash(dangerouslyDisableSandbox:true)",
       // Ask before docker exec: it can run anything in any container.
-      "Bash(docker exec *)"
+      "Bash(docker exec *)",
+      // Ask before every gh command: it runs outside the sandbox, with your GitHub login.
+      "Bash(gh *)"
     ],
     "allow": [
       // Read-only docker commands run without asking.
@@ -46,8 +62,10 @@
     // Claude may retry a blocked command outside the sandbox. The ask rule above
     // makes you approve each retry.
     "allowUnsandboxedCommands": true,
-    // docker doesn't work in the sandbox. These run outside it, with your full access.
-    "excludedCommands": ["docker ps *", "docker logs *", "docker exec *"],
+    // These run outside the sandbox, with your full access. docker doesn't work in the
+    // sandbox. gh can't read its login there, because the read block hides your home
+    // folder. The ask rule above makes you approve each gh call.
+    "excludedCommands": ["docker ps *", "docker logs *", "docker exec *", "gh *"],
 
     "filesystem": {
       // npm keeps its cache in your home folder, which the read block hides.

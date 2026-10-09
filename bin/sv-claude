@@ -1,17 +1,38 @@
 #!/bin/bash
-# Run Claude Code in SandVault on a copy of the current repository.
+# Run Claude Code in SandVault on a copy of the current folder: a repository,
+# or a folder that holds repositories, such as a VS Code workspace.
 # Afterwards, show what Claude changed and copy it back if you agree.
-# Run it from the repository's top folder, for example in VS Code's terminal.
+# Options go to Claude, for example "sv-claude --continue" or "sv-claude --resume".
+# "sv-claude shell" opens a SandVault shell on the copy instead of Claude;
+# "sv-claude shell <command>" runs one command there.
 set -euo pipefail
+
+MODE=claude
+if [ "${1:-}" = shell ]; then
+    MODE=shell
+    shift
+fi
 
 SRC="$(pwd -P)"
 SHARED="/Users/Shared/sv-$USER"
 
-[ -d "$SRC/.git" ] || { echo "Run this from a repository's top folder." >&2; exit 1; }
+# Never copy your home folder, or a folder above it, into SandVault.
+case "$(cd "$HOME" && pwd -P)/" in
+    "$SRC"/*) echo "Don't run this from your home folder. Run it from a repository, or a folder of repositories." >&2; exit 1 ;;
+esac
+if [ -d "$SRC/.git" ]; then
+    WHAT="this repository"
+elif compgen -G "$SRC/*/.git" > /dev/null; then
+    WHAT="$(compgen -G "$SRC/*/.git" | wc -l | tr -d ' ') repositories"
+else
+    echo "Run this from a repository's top folder, or a folder whose subfolders are repositories." >&2
+    exit 1
+fi
 [ -d "$SHARED" ] || { echo "SandVault isn't set up for $USER. See docs/macos.md." >&2; exit 1; }
 
 # One copy per folder: its name plus a short hash of its full path.
-COPY="$SHARED/work/$(basename "$SRC")-$(printf '%s' "$SRC" | shasum | cut -c1-8)"
+NAME="$(basename "$SRC")-$(printf '%s' "$SRC" | shasum | cut -c1-8)"
+COPY="$SHARED/work/$NAME"
 
 # rsync runs as you. It copies the executable bit, but no owners, groups or ACLs:
 # files in your folder stay yours, and files in the copy get the shared folder's
@@ -49,17 +70,34 @@ rsync_partial_ok() {
     "$@" || { rc=$?; [ "$rc" -eq 23 ] || [ "$rc" -eq 24 ] || exit "$rc"; echo "Some files were skipped." >&2; }
 }
 
-# 1. Copy your folder in. The copy then matches it exactly.
-mkdir -p "$COPY"
-echo "Copying $SRC to $COPY"
-rsync_partial_ok "${RSYNC[@]}" --delete "${SECRETS[@]}" "$SRC/" "$COPY/"
+# SandVault's account can replace the copy, or a folder above it, with a link to
+# one of your folders, and rsync would follow that link. So enter the copy, check
+# that it is the real folder, and copy to and from "." from here on. A link put
+# there later doesn't move this script out of the folder it checked.
+mkdir -p "$SHARED/work"
+cd "$SHARED/work"
+mkdir -p "$NAME"
+cd "$NAME"
+if [ "$(pwd -P)" != "$COPY" ]; then
+    echo "Stopped: $COPY or a folder above it is a link, not a plain folder. Check with ls -ld before you delete anything." >&2
+    exit 1
+fi
 
-# 2. Run Claude on the copy.
-sv -x claude "$COPY" || true
+# 1. Copy your folder in. The copy then matches it exactly.
+echo "Copying $SRC ($WHAT) to $COPY"
+rsync_partial_ok "${RSYNC[@]}" --delete "${SECRETS[@]}" "$SRC/" ./
+
+# 2. Run Claude, or a shell, on the copy. The copy's path stays the same for
+# this folder, so --continue and --resume find earlier conversations.
+if [ $# -gt 0 ]; then
+    sv -x "$MODE" "$COPY" -- "$@" || true
+else
+    sv -x "$MODE" "$COPY" || true
+fi
 
 # 3. Copy Claude's changes back, after you agree. --update keeps files you
 # changed during the session. Nothing in your folder is deleted.
-BACK=("${RSYNC[@]}" --update "${AUTORUN[@]}" "${SECRETS[@]}" "$COPY/" "$SRC/")
+BACK=("${RSYNC[@]}" --update "${AUTORUN[@]}" "${SECRETS[@]}" ./ "$SRC/")
 CHANGES="$("${BACK[@]}" --dry-run --itemize-changes)"
 if [ -z "$CHANGES" ]; then
     echo "No changes to copy back."

@@ -10,7 +10,8 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
 - Shell commands reach only GitHub, npm and PyPI. Other hosts are refused.
 - Claude's file tools can't read outside the project.
 - SSH keys and cloud credentials are blocked. `.env` files are blocked for Claude's file tools and for commands like `cat`. Token variables are removed from shell commands.
-- Claude asks before it retries a command outside the sandbox, and before commands like `docker exec`.
+- Claude can't change Claude Code's settings files or your personal instructions (`~/.claude/CLAUDE.md`, `~/.claude/rules/`).
+- Claude asks before it retries a command outside the sandbox, and before `docker exec` and every `gh` command.
 - Sessions start in auto mode: a classifier approves routine actions and blocks risky ones. Bypass mode is off.
 - Verbose view shows every tool call in full.
 - Claude Code's telemetry is off: no usage metrics, error reports, surveys or feedback uploads. [docs/data.md](docs/data.md) lists what is still sent.
@@ -23,7 +24,7 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
 - Hooks, MCP servers and plugins run with your full access. Install only what you trust.
 - Settings in a repository's `.claude/` folder can switch the sandbox off, and the trust dialog doesn't show it. Read that folder before you trust a repository, or use [managed settings](docs/managed-settings.md).
 - Claude's web tool (WebFetch) ignores the host list. In auto mode the classifier reviews fetches.
-- Commands you approve outside the sandbox, the `docker` commands, and commands you type after `!` run with your full access.
+- Commands you approve outside the sandbox, the `docker` and `gh` commands, and commands you type after `!` run with your full access.
 - Claude sends what it reads to Anthropic. See [docs/data.md](docs/data.md).
 
 ## Install
@@ -32,15 +33,18 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
    - macOS: [docs/macos.md](docs/macos.md)
    - Linux: [docs/linux.md](docs/linux.md)
    - Windows: [docs/windows.md](docs/windows.md)
-2. From this folder, install the settings. Nothing applies until you do: Claude Code doesn't read `settings.jsonc` itself. `grep` removes the comment lines, because Claude Code reads strict JSON only:
+2. From this folder, install the settings and the instructions for Claude. Nothing applies until you do: Claude Code doesn't read `settings.jsonc` itself. `grep` removes the comment lines, because Claude Code reads strict JSON only:
 
    ```bash
-   mkdir -p ~/.claude
+   mkdir -p ~/.claude/rules
    [ -f ~/.claude/settings.json ] && [ ! -f ~/.claude/settings.json.bak ] && cp ~/.claude/settings.json ~/.claude/settings.json.bak
    grep -v '^[[:space:]]*//' settings.jsonc > ~/.claude/settings.json
+   cp rules/sandbox.md ~/.claude/rules/
    ```
 
    The first install saves your old settings in `settings.json.bak`. Move your own keys from there into `settings.jsonc`. Make every later change in `settings.jsonc` and repeat this step, because it overwrites `~/.claude/settings.json`.
+
+   [rules/sandbox.md](rules/sandbox.md) tells Claude how to write shell commands that work with these settings without extra prompts. Claude Code loads it in every session.
 3. Run `claude doctor`. It must report no settings errors.
 
 ## Verify
@@ -97,6 +101,7 @@ To let routine commands run without auto mode's check, list them in the project'
 | --- | --- |
 | A host is refused | Add it to `sandbox.network.allowedDomains` in `settings.jsonc` and repeat the install. Repository settings can't add hosts. |
 | A tool or cache in your home folder is missing or read-only (nvm, pyenv, cargo, pip) | Add its folder to `sandbox.filesystem.allowRead` in `settings.jsonc`, and to `allowWrite` if it writes there. Use `~/` paths. Repeat the install. |
+| A tool can't read its login or config in your home folder, such as `gcloud` or `kubectl` | Add it to `sandbox.excludedCommands` in `settings.jsonc`, for example `"gcloud *"`, and repeat the install. It then runs outside the sandbox with your full access, and auto mode reviews each call. To approve each call yourself, also add an ask rule such as `"Bash(gcloud *)"`. |
 | `git push` or `git pull` fails | The sandbox hides your credentials. Approve the retry outside the sandbox, or run the command yourself. |
 | A command can't reach a server on `localhost` | macOS: set `sandbox.network.allowLocalBinding` to `true`; this opens every local port. Linux and WSL2: add the command to `sandbox.excludedCommands`; it then runs with your full access. |
 | Auto mode blocked an action you want | Run `/permissions`, open **Recently denied**, select the action and press `r`. |

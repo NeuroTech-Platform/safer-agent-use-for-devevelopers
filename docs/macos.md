@@ -9,7 +9,7 @@ On top of it, Claude Code runs inside [SandVault](https://github.com/webcoyote/s
 Claude Code's sandbox covers shell commands only. SandVault runs all of Claude Code as a separate account, so what the sandbox doesn't cover is still kept out of your home folder:
 
 - Claude's file edits, hooks, MCP servers and plugins can't reach your home folder: your other projects, SSH keys, cloud credentials and browser data.
-- Commands that run outside Claude Code's sandbox, such as approved retries and `docker`, run as that account, not as you.
+- Commands that run outside Claude Code's sandbox, such as approved retries, `docker` and `gh`, run as that account, not as you.
 - The account has its own keychain. It can't read yours.
 - The account has no admin rights.
 
@@ -86,14 +86,15 @@ These steps are written for SandVault 1.32.0.
 
 ## 2. Install the settings
 
-SandVault's account has its own home folder, so your `~/.claude/settings.json` doesn't reach it. At each start, SandVault copies `/Users/Shared/sv-$USER/user/` into that home folder. In your daily account, from this repository's folder:
+SandVault's account has its own home folder, so your `~/.claude` folder doesn't reach it. At each start, SandVault copies `/Users/Shared/sv-$USER/user/` into that home folder. In your daily account, from this repository's folder:
 
 ```bash
-mkdir -p "/Users/Shared/sv-$USER/user/.claude"
+mkdir -p "/Users/Shared/sv-$USER/user/.claude/rules"
 grep -v '^[[:space:]]*//' settings.jsonc > "/Users/Shared/sv-$USER/user/.claude/settings.json"
+cp rules/sandbox.md "/Users/Shared/sv-$USER/user/.claude/rules/"
 ```
 
-Repeat this after every change to `settings.jsonc`.
+Repeat this after every change to `settings.jsonc` or `rules/sandbox.md`.
 
 > [!NOTE]
 > Claude Code in VS Code, or started with `claude` in a terminal, runs as you, outside SandVault. Install the settings in your own account too: [README](../README.md#install), step 2.
@@ -129,15 +130,19 @@ install -m 755 bin/sv-claude ~/.local/bin/
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
 ```
 
-Open a new terminal. To update `sv-claude`, run the `install` line again.
+Open a new terminal. To update `sv-claude`, run the `install` line again. The settings stop Claude from changing `sv-claude`, so update it yourself.
 
 ## 5. Start Claude
 
-In VS Code's terminal, at your repository's top folder:
+In VS Code's terminal, in your repository's top folder, or in a folder whose subfolders are repositories, such as your workspace folder:
 
 ```bash
 sv-claude
 ```
+
+It copies the whole folder, so every repository in it reaches SandVault. It refuses your home folder.
+
+Options go to Claude. `sv-claude --continue` picks up the last conversation, and `sv-claude --resume` lets you choose one. The copy keeps the same path for each folder, so earlier conversations stay available.
 
 - Before each session, `sv-claude` copies your folder into `/Users/Shared/sv-$USER/work/`. `.env` files stay out.
 - After the session, it lists Claude's changes and asks before copying them back. It never deletes files in your folder, and it keeps files you changed during the session.
@@ -149,6 +154,18 @@ sv-claude
 - Sessions start on Opus 5.5 at high effort. A `/model` or `/effort` change lasts one session, because SandVault restores the settings at every start. To change the default, edit `settings.jsonc` and repeat [step 2](#2-install-the-settings).
 - Don't start Claude with `sv` from your own folder. SandVault's account can't read it, so the session silently starts in `/Users/Shared/sv-$USER`, which holds the settings SandVault copies in. Claude could change them there.
 - Don't open the copy in VS Code, or run git in it from your own account. SandVault's account can change its `.git/config` so that git runs commands as you.
+
+### Use other software in SandVault
+
+To run other software as SandVault's account on the same copy, for example to install dependencies or run the project yourself, open a SandVault shell instead of Claude:
+
+```bash
+sv-claude shell
+```
+
+To run one command instead, such as `sv-claude shell npm install`, put it after `shell`.
+
+When you exit the shell, you get the same review before changes are copied back. Commands you type there run as SandVault's account, so they can't reach your home folder. Claude Code's sandbox and its network limits don't apply to them.
 
 ## 6. Verify
 
@@ -167,5 +184,6 @@ SandVault's sandbox also blocks external drives (`/Volumes`) and world-writable 
 | Every command fails with `sandbox_apply: Operation not permitted` | You started without `-x`. Quit and run `sv-claude`. |
 | A keychain password popup, or `Permission denied` in the shared folder | Files there have the wrong permissions. Run `sv --rebuild build`. On a daily account, the admin repeats [step b](#daily-account-without-admin-rights). |
 | Daily account: `sv` asks for a password, or fails with `Permission denied` on `guest/home/.ssh` | The admin repeats [step b](#daily-account-without-admin-rights), for example after a SandVault upgrade. |
-| `gh`, `gcloud` or `terraform` fail TLS verification | Approve the retry outside the sandbox. |
+| `gcloud` or `terraform` fail TLS verification | Add the tool to `sandbox.excludedCommands` in `settings.jsonc`, as the settings do for `gh`, and repeat step 2. |
 | `open` or `osascript` fail with error `-600` | The sandbox blocks Apple Events. Approve the retry outside the sandbox. |
+| `sv-claude` stops: `… is a link, not a plain folder` | Something running as SandVault's account replaced the copy, or a folder above it, with a link to another folder. Delete only the link, with `rm` and no trailing `/`, and find out what created it. |
