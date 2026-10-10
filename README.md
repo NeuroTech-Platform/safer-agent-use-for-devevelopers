@@ -7,7 +7,8 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
 ## What you get
 
 - Shell commands run in an OS sandbox. They write only in the project, a temp folder and the npm cache. They can't read home folders or mounted drives, except the project.
-- Shell commands reach only GitHub, npm and PyPI. Other hosts are refused.
+- Shell commands reach only the allowlisted development dependencies, package registries
+  and operating-system repositories. Other hosts are refused.
 - Claude's file tools can't read outside the project.
 - SSH keys and cloud credentials are blocked. `.env` files are blocked for Claude's file tools and for commands like `cat`. Token variables are removed from shell commands.
 - Claude can't change Claude Code's settings files or your personal instructions (`~/.claude/CLAUDE.md`, `~/.claude/rules/`).

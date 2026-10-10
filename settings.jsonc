@@ -75,15 +75,122 @@
     },
 
     "network": {
-      // The only hosts shell commands can reach: GitHub, npm, PyPI.
-      // Every allowed host can receive data. Keep the list short.
+      // The only hosts shell commands can reach. Every allowed host can receive data;
+      // keep the list short.
       "allowedDomains": [
+        // Source control
         "github.com",
         "*.github.com",
+        "githubusercontent.com",
         "*.githubusercontent.com",
+
+        // Hugging Face and Xet storage
+        "huggingface.co",
+        "us.aws.cdn.hf.co",
+        "us.gcp.cdn.hf.co",
+        "cdn-lfs-us-1.hf.co",
+        "cdn-lfs-eu-1.hf.co",
+        "cas-bridge.xethub.hf.co",
+        "cas-server.xethub.hf.co",
+        "transfer.xethub.hf.co",
+
+        // JavaScript
         "registry.npmjs.org",
+        "registry.yarnpkg.com",
+        "nodejs.org",
+
+        // Python
         "pypi.org",
-        "files.pythonhosted.org"
+        "files.pythonhosted.org",
+
+        // GPU and ML
+        "developer.download.nvidia.com",
+        "edge.urm.nvidia.com",
+        "pypi.nvidia.com",
+        "download.pytorch.org",
+        "download-r2.pytorch.org",
+        "www.gstatic.com",
+
+        // Linux distributions
+        "dl-cdn.alpinelinux.org",
+        "deb.debian.org",
+        "security.debian.org",
+        "archive.ubuntu.com",
+        "security.ubuntu.com",
+        "ports.ubuntu.com",
+        "download.fedoraproject.org",
+        "mirrors.fedoraproject.org",
+        "dl.rockylinux.org",
+        "repo.almalinux.org",
+        "mirrorlist.centos.org",
+        "mirror.stream.centos.org",
+        "download.opensuse.org",
+        "mirror.archlinux.org",
+        "geo.mirror.pkgbuild.com",
+
+        // Containers: pull paths only
+        "registry-1.docker.io",
+        "auth.docker.io",
+        "production.cloudflare.docker.com",
+        "ghcr.io",
+        "quay.io",
+        "mcr.microsoft.com",
+        "gcr.io",
+        "nvcr.io",
+
+        // Rust
+        "static.rust-lang.org",
+        "crates.io",
+        "index.crates.io",
+        "static.crates.io",
+
+        // Go
+        "go.dev",
+        "dl.google.com",
+        "proxy.golang.org",
+        "sum.golang.org",
+
+        // Java and Kotlin
+        "repo.maven.apache.org",
+        "repo1.maven.org",
+        "plugins.gradle.org",
+        "services.gradle.org",
+        "downloads.gradle.org",
+
+        // Ruby
+        "rubygems.org",
+        "index.rubygems.org",
+
+        // PHP
+        "packagist.org",
+        "repo.packagist.org",
+        "getcomposer.org",
+
+        // .NET
+        "api.nuget.org",
+        "globalcdn.nuget.org",
+
+        // Haskell, Swift, Perl and R
+        "hackage.haskell.org",
+        "downloads.haskell.org",
+        "download.swift.org",
+        "cpan.org",
+        "www.cpan.org",
+        "cran.r-project.org",
+
+        // Language documentation
+        "docs.python.org",
+        "developer.mozilla.org",
+        "doc.rust-lang.org",
+        "docs.rs",
+        "pkg.go.dev",
+        "docs.oracle.com",
+        "docs.gradle.org",
+        "kotlinlang.org",
+        "docs.ruby-lang.org",
+        "www.php.net",
+        "learn.microsoft.com",
+        "docs.swift.org"
       ],
       // Refuse all other hosts without asking. Repository settings can't add hosts.
       "strictAllowlist": true
