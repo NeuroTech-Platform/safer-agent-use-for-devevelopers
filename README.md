@@ -104,6 +104,7 @@ To let routine commands run without auto mode's check, list them in the project'
 | A tool or cache in your home folder is missing or read-only (nvm, pyenv, cargo, pip) | Add its folder to `sandbox.filesystem.allowRead` in `settings.jsonc`, and to `allowWrite` if it writes there. Use `~/` paths. Repeat the install. |
 | A tool can't read its login or config in your home folder, such as `gcloud` or `kubectl` | Add it to `sandbox.excludedCommands` in `settings.jsonc`, for example `"gcloud *"`, and repeat the install. It then runs outside the sandbox with your full access, and auto mode reviews each call. To approve each call yourself, also add an ask rule such as `"Bash(gcloud *)"`. |
 | `git push` or `git pull` fails | The sandbox hides your credentials. Approve the retry outside the sandbox, or run the command yourself. |
+| A script or test can't write to `/tmp`, or `mktemp` fails with `Operation not permitted` | Sandboxed commands write only in the project, `$TMPDIR` and the npm cache. Make the script use `$TMPDIR`, as Python's `tempfile` and Node's `os.tmpdir()` do. On macOS, `mktemp` without a template doesn't use `$TMPDIR`: give it one, such as `mktemp "${TMPDIR:-/tmp}/name.XXXXXX"`. |
 | A command can't reach a server on `localhost` | macOS: set `sandbox.network.allowLocalBinding` to `true`; this opens every local port. Linux and WSL2: add the command to `sandbox.excludedCommands`; it then runs with your full access. |
 | Auto mode blocked an action you want | Run `/permissions`, open **Recently denied**, select the action and press `r`. |
 
