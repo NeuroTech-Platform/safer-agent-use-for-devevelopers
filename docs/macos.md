@@ -122,7 +122,7 @@ The token uses your subscription but can only make model requests. In SandVault,
 
 ## 4. Install `sv-claude`
 
-[`bin/sv-claude`](../bin/sv-claude) runs Claude in SandVault on a copy of your repository, and copies Claude's changes back after you agree. Install it in your daily account, from this repository's folder:
+[`bin/sv-claude`](../bin/sv-claude) runs Claude in SandVault on a copy of your repository, and keeps your folder and the copy in sync while it runs. Install it in your daily account, from this repository's folder:
 
 ```bash
 mkdir -p ~/.local/bin
@@ -140,20 +140,36 @@ In VS Code's terminal, in your repository's top folder, or in a folder whose sub
 sv-claude
 ```
 
-It copies the whole folder, so every repository in it reaches SandVault. It refuses your home folder.
+It refuses your home folder. Options go to Claude, for example `sv-claude --continue` or `sv-claude --resume`. Each folder keeps the same copy path, so earlier conversations stay available.
 
-Options go to Claude. `sv-claude --continue` picks up the last conversation, and `sv-claude --resume` lets you choose one. The copy keeps the same path for each folder, so earlier conversations stay available.
-
-- Before each session, `sv-claude` copies your folder into `/Users/Shared/sv-$USER/work/`. `.env` files stay out.
-- After the session, it lists Claude's changes and asks before copying them back. It never deletes files in your folder, and it keeps files you changed during the session.
-- It never copies back files that tools run code from on their own, such as `.git`, `.vscode`, `.envrc`, `.claude` and `node_modules`.
-- Review the changes in VS Code's Source Control view before you run them. Tools that watch files, such as dev servers, run new code right away.
-- Claude's commits stay in the copy. Commit in your own folder.
 - `sv-claude` starts SandVault with `-x`, which turns off SandVault's own sandbox. macOS can't run one sandbox inside another, so without `-x` Claude Code's sandbox can't start. The separate account still keeps your home folder out of reach.
 - SandVault starts Claude with `--dangerously-skip-permissions`. The settings refuse that flag, so the session runs in auto mode.
 - Sessions start on Opus 5.5 at high effort. A `/model` or `/effort` change lasts one session, because SandVault restores the settings at every start. To change the default, edit `settings.jsonc` and repeat [step 2](#2-install-the-settings).
 - Don't start Claude with `sv` from your own folder. SandVault's account can't read it, so the session silently starts in `/Users/Shared/sv-$USER`, which holds the settings SandVault copies in. Claude could change them there.
 - Don't open the copy in VS Code, or run git in it from your own account. SandVault's account can change its `.git/config` so that git runs commands as you.
+
+### Sync
+
+While a session runs, `sv-claude` syncs your folder and its copy in `/Users/Shared/sv-$USER/work/`, both ways, every 3 seconds. Your account never reads or writes the copy. Everything in the copy runs as SandVault's account, through `sudo`.
+
+- Synced: files git sees, tracked or untracked. Not synced: files `.gitignore` excludes, such as `node_modules` and build output. Install dependencies in SandVault with `sv-claude shell npm install`.
+- In a folder of repositories, only the repositories are synced.
+- Never synced: `.env` and `.env.*`, except `.env.example`.
+- From your folder to the copy only: files that tools run code from on their own, such as `.vscode`, `.envrc`, `.claude` and package-manager settings. [`bin/sv-claude`](../bin/sv-claude) lists them.
+- In the copy only: links that point out of the repository, and submodules.
+- Same lines changed on both sides between two syncs: your version is kept on both sides. You get a notification. `~/Library/Caches/sv-claude/<folder>/sync.log` gives the command that shows Claude's version.
+- More than 20 deletions, or 300 changed files, from Claude within 60 seconds: not applied to your folder. You get a notification. `sv-claude sync` shows the changes and asks.
+- Claude's changes are in your folder within seconds. Dev servers, test watchers and VS Code extensions can run them at once. Review them in Source Control before you commit.
+- The copy's repository gets your branches, tags and `origin` URL, without credentials. Your git config and hooks are not copied. Claude's commits stay in the copy.
+- The sync runs `sudo -n -H -u sandvault-$USER /usr/bin/env …`. SandVault's `/etc/sudoers.d/50-nopasswd-for-sandvault-$USER` allows your account to run `/usr/bin/env`, with any arguments, as `sandvault-$USER`, without a password. It allows nothing as root or as another account. `-n` fails instead of asking for a password. `-H` sets the home folder to `sandvault-$USER`'s. These commands get `/dev/null` as stdin and stderr, so they can't reach your terminal or your files. Each call is in the system log.
+
+To hold all of Claude's changes, start with `SV_CLAUDE_REVIEW=1 sv-claude`. Your edits still reach the copy. To apply Claude's changes, run in a second terminal, in the same folder:
+
+```bash
+sv-claude sync
+```
+
+It lists the files that would change and asks. `d` opens the full diff in VS Code.
 
 ### Use other software in SandVault
 
@@ -165,7 +181,7 @@ sv-claude shell
 
 To run one command instead, such as `sv-claude shell npm install`, put it after `shell`.
 
-When you exit the shell, you get the same review before changes are copied back. Commands you type there run as SandVault's account, so they can't reach your home folder. Claude Code's sandbox and its network limits don't apply to them.
+The sync also runs during `sv-claude shell`. Commands you type there run as SandVault's account, so they can't reach your home folder. Claude Code's sandbox and its network limits don't apply to them.
 
 ## 6. Verify
 
@@ -186,4 +202,7 @@ SandVault's sandbox also blocks external drives (`/Volumes`) and world-writable 
 | Daily account: `sv` asks for a password, or fails with `Permission denied` on `guest/home/.ssh` | The admin repeats [step b](#daily-account-without-admin-rights), for example after a SandVault upgrade. |
 | `gcloud` or `terraform` fail TLS verification | Add the tool to `sandbox.excludedCommands` in `settings.jsonc`, as the settings do for `gh`, and repeat step 2. |
 | `open` or `osascript` fail with error `-600` | The sandbox blocks Apple Events. Approve the retry outside the sandbox. |
-| `sv-claude` stops: `… is a link, not a plain folder` | Something running as SandVault's account replaced the copy, or a folder above it, with a link to another folder. Delete only the link, with `rm` and no trailing `/`, and find out what created it. |
+| A command in SandVault can't find `node_modules`, a virtual environment or another ignored folder | Ignored files aren't synced. Create them in SandVault, for example with `sv-claude shell npm install`. |
+| `sv-claude can't run commands as sandvault-…` | SandVault's sudo rule is missing. Run `sv --rebuild build`. On a daily account, the admin repeats [step b](#daily-account-without-admin-rights). |
+| `sv-claude needs a newer git` | Run `brew install git`, then open a new terminal. On a daily account without admin rights, the admin account runs it. |
+| `SandVault's account needs a newer git` | Update the Xcode Command Line Tools in System Settings, Software Update. On a daily account without admin rights, the admin account does it. |

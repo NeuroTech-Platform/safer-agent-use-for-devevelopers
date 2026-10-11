@@ -33,10 +33,11 @@
       // Claude can't change your personal instructions, which load in every session.
       "Edit(~/.claude/CLAUDE.md)",
       "Edit(~/.claude/rules/**)",
-      // Claude can't change sv-claude, which runs as you: its source, and anything in
-      // ~/.local/bin, which is on your PATH.
+      // Claude can't change sv-claude, which runs as you: its source, anything in
+      // ~/.local/bin, which is on your PATH, and its records of each session.
       "Edit(**/bin/sv-claude)",
-      "Edit(~/.local/bin/**)"
+      "Edit(~/.local/bin/**)",
+      "Edit(~/Library/Caches/sv-claude/**)"
     ],
     "ask": [
       // Ask before any command runs outside the sandbox, in every mode.
