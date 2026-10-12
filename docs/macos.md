@@ -130,7 +130,7 @@ install -m 755 bin/sv-claude ~/.local/bin/
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile
 ```
 
-Open a new terminal. To update `sv-claude`, run the `install` line again. The settings stop Claude from changing `sv-claude`, so update it yourself.
+Open a new terminal. To update `sv-claude`, run the `install` line again. The settings stop Claude from changing `sv-claude`, so update it yourself. [`tests/sv-claude.sh`](../tests/sv-claude.sh) tests it against a fake SandVault, in about two minutes.
 
 ## 5. Start Claude
 
@@ -159,6 +159,7 @@ While a session runs, `sv-claude` syncs your folder and its copy in `/Users/Shar
 - In the copy only: links that point out of the repository, and submodules.
 - Same lines changed on both sides between two syncs: your version is kept on both sides. You get a notification. `~/Library/Caches/sv-claude/<folder>/sync.log` gives the command that shows Claude's version.
 - More than 20 deletions, or 300 changed files, from Claude within 60 seconds: not applied to your folder. You get a notification. `sv-claude sync` shows the changes and asks.
+- A checkout, reset, rebase, merge or pull by Claude in the copy: the changed files are not applied to your folder. You get a notification naming the copy's branch. `sv-claude sync` shows the changes, and the `git switch` line that puts your folder on the same branch first.
 - Claude's changes are in your folder within seconds. Dev servers, test watchers and VS Code extensions can run them at once. Review them in Source Control before you commit.
 - The copy's repository gets your branches, tags and `origin` URL, without credentials. Your git config and hooks are not copied. Claude's commits stay in the copy.
 - The sync runs `sudo -n -H -u sandvault-$USER /usr/bin/env …`. SandVault's `/etc/sudoers.d/50-nopasswd-for-sandvault-$USER` allows your account to run `/usr/bin/env`, with any arguments, as `sandvault-$USER`, without a password. It allows nothing as root or as another account. `-n` fails instead of asking for a password. `-H` sets the home folder to `sandvault-$USER`'s. These commands get `/dev/null` as stdin and stderr, so they can't reach your terminal or your files. Each call is in the system log.

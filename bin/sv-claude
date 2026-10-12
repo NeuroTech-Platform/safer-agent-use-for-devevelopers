@@ -47,15 +47,15 @@ fi
 # lead it to your files. Everything in the copy runs as SandVault's account,
 # through the sudo rule SandVault installs for /usr/bin/env. Data passes
 # between the two accounts through pipes, as git objects.
-AS_SV=(sudo -n -H -u "$SVUSER" /usr/bin/env PATH=/usr/bin:/bin:/usr/sbin:/sbin)
-"${AS_SV[@]}" true < /dev/null > /dev/null 2>&1 || { echo "sv-claude can't run commands as $SVUSER. See docs/macos.md, step 1." >&2; exit 1; }
+AS_SV=(sudo -n -H -u "$SVUSER" /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin)
+( cd / && "${AS_SV[@]}" true < /dev/null > /dev/null 2>&1 ) || { echo "sv-claude can't run commands as $SVUSER. See docs/macos.md, step 1." >&2; exit 1; }
 
 EMPTY="$(git hash-object -t tree /dev/null)"
 if ! git -C "$SRC/${REPOS[0]}" --attr-source="$EMPTY" merge-tree --write-tree --merge-base="$EMPTY" "$EMPTY" "$EMPTY" > /dev/null 2>&1; then
     echo "sv-claude needs a newer git than $(git version). Install one with: brew install git" >&2
     exit 1
 fi
-if ! "${AS_SV[@]}" git --attr-source="$EMPTY" version < /dev/null > /dev/null 2>&1; then
+if ! ( cd / && "${AS_SV[@]}" git --attr-source="$EMPTY" version < /dev/null > /dev/null 2>&1 ); then
     echo "SandVault's account needs a newer git in /usr/bin. Update the Xcode Command Line Tools." >&2
     exit 1
 fi
@@ -105,10 +105,17 @@ read -r -d '' SVSIDE << 'EOF' || true
 set -euo pipefail
 NAME="$1" ID="$2" CMD="$3"
 shift 3
+# The environment is empty. HOME is this account's own.
+if [ -z "${HOME:-}" ] || [ ! -O "$HOME" ]; then
+    HOME="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}')"
+    export HOME
+fi
 D="$HOME/.cache/sv-claude/$NAME"
 S="$D/$ID.git"
 I="$D/$ID.index"
 mkdir -p "$D"
+# Errors go to a file here. sv-claude reads it back, as data, when a step fails.
+exec 2>> "$D/$ID.err"
 [ -d "$S" ] || git init -q --bare "$S"
 g() {
     git -c core.autocrlf=false -c core.safecrlf=false -c core.fsmonitor=false -c core.trustctime=false \
@@ -136,7 +143,16 @@ case "$CMD" in
             c="$(g commit-tree "$t" -m copy < /dev/null)"
             echo "$t $c" > "$D/$ID.last"
             echo "$c"
-        fi ;;
+        fi
+        # Second line: whether the copy's own HEAD moved since the last report.
+        if [ "$(git rev-parse -q --verify HEAD || true)" = "$(cat "$D/$ID.head" 2> /dev/null || true)" ]; then echo same; else echo moved; fi ;;
+    moved) # moved DIR: the copy's branch, then the files its HEAD's move changed, NUL-separated
+        cd "$1"
+        old="$(cat "$D/$ID.head" 2> /dev/null || true)"
+        new="$(git rev-parse -q --verify HEAD || true)"
+        printf '%s\0' "$(git symbolic-ref -q --short HEAD || echo 'a detached HEAD')"
+        if [ -n "$old" ] && [ -n "$new" ]; then git diff --name-only -z --no-renames "$old" "$new" -- || true; fi
+        echo "$new" > "$D/$ID.head" ;;
     send)  # send NEW [OLD]: the objects of NEW that OLD lacks, as a pack
         { echo "$1"; [ -z "${2:-}" ] || echo "^$2"; } | g pack-objects --revs --stdout -q ;;
     take)  # take: objects from a pack on stdin
@@ -159,7 +175,9 @@ case "$CMD" in
         g update-ref refs/keep "$1"
         if t="$(GIT_INDEX_FILE="$I" g write-tree 2> /dev/null)"; then g update-ref refs/keep-index "$t"; fi
         g gc -q --prune=now > /dev/null 2>&1 || true ;;
-    repo)  # repo DIR HEAD ORIGIN: the copy's own repository, from a bundle on stdin
+    repo)  # repo DIR HEAD ORIGIN: the copy's own repository, from a bundle on stdin.
+           # Prints fetched, none or failed. A session starts with an empty error file.
+        : > "$D/$ID.err"
         mkdir -p "$1"
         cd "$1"
         if [ ! -f "$D/$ID.made" ]; then
@@ -168,29 +186,42 @@ case "$CMD" in
             touch "$D/$ID.made"
         fi
         cat > "$D/$ID.bundle"
+        result=none
         if [ -s "$D/$ID.bundle" ]; then
-            git fetch -q --update-head-ok "$D/$ID.bundle" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
+            if git fetch -q --update-head-ok "$D/$ID.bundle" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' > /dev/null; then
+                result=fetched
+            else
+                result=failed
+            fi
         fi
         rm -f "$D/$ID.bundle"
         old="$(git rev-parse -q --verify HEAD || true)"
         case "$2" in
             refs/heads/*) git symbolic-ref HEAD "$2" ;;
-            ?*) git update-ref --no-deref HEAD "$2" ;;
+            ?*) git update-ref --no-deref HEAD "$2" || true ;;
         esac
         new="$(git rev-parse -q --verify HEAD || true)"
-        if [ -n "$new" ] && [ "$old" != "$new" ]; then git read-tree HEAD; fi
+        # A new repository has an empty index; a moved HEAD needs a new one.
+        if [ -n "$new" ] && { [ "$old" != "$new" ] || [ -z "$(git ls-files | head -c 1)" ]; }; then git read-tree HEAD; fi
         git remote remove origin > /dev/null 2>&1 || true
-        if [ -n "$3" ]; then git remote add origin "$3"; fi ;;
+        if [ -n "$3" ]; then git remote add origin "$3"; fi
+        git rev-parse -q --verify HEAD > "$D/$ID.head" || : > "$D/$ID.head"
+        echo "$result" ;;
+    errors) # errors: the last errors of this side, then forget them
+        tail -n 5 "$D/$ID.err" 2> /dev/null || true
+        : > "$D/$ID.err" ;;
 esac
 EOF
-# A command run through sudo inherits stdin, stdout and stderr. SandVault's side
+# A command run through sudo inherits the current folder, stdin, stdout and
+# stderr. SandVault's side starts in /, because it can't read your folder. It
 # gets none of your terminal or files: stderr goes to /dev/null, and each call
 # below sets stdin and stdout to /dev/null or to a pipe.
-sv_side() { "${AS_SV[@]}" /bin/bash -c "$SVSIDE" sv-side "$NAME" "$@" 2> /dev/null; }
+sv_side() { ( cd / && "${AS_SV[@]}" /bin/bash -c "$SVSIDE" sv-side "$NAME" "$@" 2> /dev/null ); }
 
 use() {  # use REPO: the paths for one repository
     R="$1"
     if [ "$R" = . ]; then RD="$SRC"; CD="$COPY"; else RD="$SRC/$R"; CD="$COPY/$R"; fi
+    RN="$(basename "$RD")"
     ID="$(printf '%s' "$R" | shasum | cut -c1-8)"
     US="$STATE/$ID.git"
     UI="$STATE/$ID.index"
@@ -264,6 +295,15 @@ clashes() {  # clashes FROM TO: files TO adds where your folder has a file your 
 review() {  # show what would change in your folder, and ask
     local answer
     if [ "$R" != . ]; then echo "== $R"; fi
+    if [ -f "$STATE/$ID.githold" ]; then
+        local cb
+        cb="$(cat "$STATE/$ID.githold")"
+        echo "Claude changed the copy's git state. The copy is on $cb; your folder is on $(git -C "$RD" symbolic-ref -q --short HEAD || echo 'a detached HEAD')."
+        if [ "$cb" != 'a detached HEAD' ]; then
+            echo "To follow with your folder instead, answer N, run the line below, then sv-claude sync:"
+            printf '  git -C %q switch %q\n' "$RD" "$cb"
+        fi
+    fi
     gu diff --stat --summary -M "$Ut" "$MU"
     gu diff -M --no-color "$Ut" "$MU" > "$STATE/changes.diff"
     while true; do
@@ -280,49 +320,72 @@ review() {  # show what would change in your folder, and ask
 # sync, then update each side, unless a file changed there meanwhile. HOW is
 # auto, or ask to review Claude's changes first.
 cycle() {
-    local how="$2" B UP CP Ut U C Cs M1 Mp MU MUc MCt MCc nd nc rd rn now p rc ok_u=0 ok_c=0 allow=1
+    local how="$2" B UP CP Ut U C Cs M1 Mp MU MUc="" MCt MCc nd nc rd rn now p rc out branch ok_u=0 ok_c=0 allow=1
     use "$1"
     read -r B UP CP < "$ST" || return 1
     # A lost index starts again from the last sync, so .gitignore can't hide files.
     if [ ! -f "$UI" ]; then GIT_INDEX_FILE="$UI" gu read-tree "$UP" 2> /dev/null || rm -f "$UI"; fi
-    Ut="$(u_tree)" || { log "$R: can't read your folder"; return 1; }
+    Ut="$(u_tree)" || { log "$RN: can't read your folder"; return 1; }
     U="$(commit "$Ut" "$UP")" || return 1
-    C="$(sv_side "$ID" tree "$CD" < /dev/null)" || { log "$R: can't read the copy"; return 1; }
+    out="$(sv_side "$ID" tree "$CD" < /dev/null)" || { log "$RN: can't read the copy"; return 1; }
+    C="$(printf '%s\n' "$out" | sed -n 1p)"
+    case "$C" in *[!0-9a-f]*|'') log "$RN: bad data from SandVault"; return 1 ;; esac
     if [ "$C" != "$CP" ]; then
-        sv_side "$ID" send "$C" "$CP" < /dev/null | gu unpack-objects -q --strict || { log "$R: bad data from SandVault"; return 1; }
-        gu rev-parse -q --verify "$C^{commit}" > /dev/null || { log "$R: bad data from SandVault"; return 1; }
+        # If SandVault's side lost the objects the last sync knew, send everything.
+        { sv_side "$ID" send "$C" "$CP" < /dev/null || sv_side "$ID" send "$C" < /dev/null; } | gu unpack-objects -q --strict \
+            || { log "$RN: bad data from SandVault"; return 1; }
+        gu rev-parse -q --verify "$C^{commit}" > /dev/null || { log "$RN: bad data from SandVault"; return 1; }
     fi
+    # A checkout, reset, rebase, merge or pull in the copy changes files there.
+    # If the files that the copy's HEAD move changed overlap the copy's changes
+    # since the last sync, Claude's changes wait for your review. The paths are
+    # also checked on the next cycle, because the move can happen between the
+    # snapshot of the files and the reading of HEAD.
+    rm -f "$STATE/moved.paths"
+    if [ "$(printf '%s\n' "$out" | sed -n 2p)" = moved ]; then
+        sv_side "$ID" moved "$CD" < /dev/null > "$STATE/moved" || : > "$STATE/moved"
+        { IFS= read -r -d '' branch || true; cat; } < "$STATE/moved" > "$STATE/moved.paths"
+        branch="$(printf '%s' "${branch:-}" | tr -cd '[:print:]' | cut -c1-100)"
+        echo "$branch" > "$STATE/$ID.branch"
+    fi
+    cat "$STATE/$ID.pending" "$STATE/moved.paths" > "$STATE/check.paths" 2> /dev/null || true
+    if [ -s "$STATE/check.paths" ] && [ ! -f "$STATE/$ID.githold" ] && [ -n "$(xargs -0 env GIT_LITERAL_PATHSPECS=1 git "${GITC[@]}" \
+        --git-dir="$US" diff-tree -r --name-only --no-renames "$B" "$C" -- < "$STATE/check.paths")" ]; then
+        cp "$STATE/$ID.branch" "$STATE/$ID.githold"
+        notify "Claude changed the git state of $RN's copy (branch: $(cat "$STATE/$ID.branch")). Its changes wait. To review them, run: sv-claude sync"
+    fi
+    if [ -s "$STATE/moved.paths" ]; then mv "$STATE/moved.paths" "$STATE/$ID.pending"; else rm -f "$STATE/$ID.pending"; fi
     if [ "$U" = "$UP" ] && [ "$C" = "$CP" ] && [ "$how" = auto ]; then return 0; fi
 
     # Links out of the repository, and submodule entries, that Claude adds stay
     # in the copy, unsynced, like ignored files.
     copy_only "$B" "$C" > "$STATE/copyonly" || return 1
     if ! cmp -s "$STATE/copyonly" "$STATE/$ID.copyonly"; then
-        while IFS= read -r -d '' p; do log "$R: stays in the copy: $p (a link out of the repository, or a submodule)"; done < "$STATE/copyonly"
+        while IFS= read -r -d '' p; do log "$RN: stays in the copy: $p (a link out of the repository, or a submodule)"; done < "$STATE/copyonly"
         cp "$STATE/copyonly" "$STATE/$ID.copyonly"
     fi
-    Cs="$(tree_with "$C" "$B" "$STATE/copyonly")" || return 1
+    Cs="$(tree_with "$C" "$B" "$STATE/copyonly")" || { log "$RN: can't build the copy's tree"; return 1; }
 
     # Merge what changed on both sides. Where both changed the same lines, yours
     # wins; Claude's version stays in sv-claude's database, and the log says how
     # to get it.
     rc=0
     gu merge-tree --write-tree --name-only -z --merge-base="$B" "$U" "$Cs" > "$STATE/m0" 2> /dev/null || rc=$?
-    [ "$rc" -le 1 ] || { log "$R: merge failed"; return 1; }
+    [ "$rc" -le 1 ] || { log "$RN: merge failed"; return 1; }
     paths_of "$STATE/m0" > "$STATE/conflicts"
     rc=0
     gu merge-tree --write-tree --name-only -z -X ours --merge-base="$B" "$U" "$Cs" > "$STATE/m1" 2> /dev/null || rc=$?
-    [ "$rc" -le 1 ] || { log "$R: merge failed"; return 1; }
+    [ "$rc" -le 1 ] || { log "$RN: merge failed"; return 1; }
     M1="$(tr '\0' '\n' < "$STATE/m1" | head -1)"
     # What -X ours leaves, such as a file one side deleted and the other changed,
     # and the files that tools run code from: yours.
     { paths_of "$STATE/m1"; gu diff-tree -r -z --name-only --no-renames "$U" "$M1" -- "${RUNS[@]}"; } > "$STATE/yours"
-    Mp="$(tree_with "$M1" "$U" "$STATE/yours")" || return 1
+    Mp="$(tree_with "$M1" "$U" "$STATE/yours")" || { log "$RN: can't build the merged tree"; return 1; }
     # Your folder: the merge, except files that would replace a file your
     # .gitignore excludes. The copy: the merge, plus Claude's copy-only entries.
-    clashes "$U" "$Mp" > "$STATE/clashes" || return 1
-    MU="$(tree_with "$Mp" "$U" "$STATE/clashes")" || return 1
-    MCt="$(tree_with "$Mp" "$C" "$STATE/copyonly")" || return 1
+    clashes "$U" "$Mp" > "$STATE/clashes" || { log "$RN: can't check your folder"; return 1; }
+    MU="$(tree_with "$Mp" "$U" "$STATE/clashes")" || { log "$RN: can't build your folder's tree"; return 1; }
+    MCt="$(tree_with "$Mp" "$C" "$STATE/copyonly")" || { log "$RN: can't build the copy's tree"; return 1; }
 
     # Held for your review: SV_CLAUDE_REVIEW=1, or many deletions or changes
     # within a minute.
@@ -330,7 +393,7 @@ cycle() {
     nc="$(gu diff-tree -r -z --no-renames --name-only "$Ut" "$MU" | tr -cd '\0' | wc -c | tr -d ' ')"
     now="$(date +%s)"
     read -r rd rn < <(awk -v t="$((now - 60))" '$1 > t { d += $2; c += $3 } END { print d + 0, c + 0 }' "$STATE/$ID.recent")
-    if [ "$REVIEW" = 1 ] || [ $((rd + nd)) -gt "$MAX_DELETES" ] || [ $((rn + nc)) -gt "$MAX_CHANGES" ]; then allow=0; fi
+    if [ "$REVIEW" = 1 ] || [ -f "$STATE/$ID.githold" ] || [ $((rd + nd)) -gt "$MAX_DELETES" ] || [ $((rn + nc)) -gt "$MAX_CHANGES" ]; then allow=0; fi
     if [ "$how" = ask ] && [ "$MU" != "$Ut" ]; then
         if review; then allow=1; else allow=0; echo "Not copied. Your changes still go to the copy."; fi
     elif [ "$allow" = 0 ] && [ "$MU" != "$Ut" ] && [ "$MU" != "$(cat "$STATE/$ID.held" 2> /dev/null)" ]; then
@@ -346,11 +409,12 @@ cycle() {
         if ( cd "$RD" && cp "$UI" "$UI.new" && GIT_INDEX_FILE="$UI.new" gu --work-tree=. read-tree -m -u "$U" "$MUc" 2> "$STATE/apply.err" && mv "$UI.new" "$UI" ); then
             ok_u=1
             rm -f "$STATE/$ID.held"
+            if [ "$how" = ask ]; then rm -f "$STATE/$ID.githold"; fi
             if [ "$how" = ask ]; then : > "$STATE/$ID.recent"; else echo "$now $nd $nc" >> "$STATE/$ID.recent"; fi
-            log "$R: from Claude: $(gu diff-tree -r --no-renames --name-only "$Ut" "$MU" | head -5 | tr '\n' ' ')($nc files)"
+            log "$RN: from Claude: $(gu diff-tree -r --no-renames --name-only "$Ut" "$MU" | head -5 | tr '\n' ' ')($nc files)"
         else
             rm -f "$UI.new"
-            log "$R: your folder changed during the sync; trying again. $(head -1 "$STATE/apply.err")"
+            log "$RN: your folder changed during the sync; trying again. $(head -1 "$STATE/apply.err")"
         fi
     fi
     # The copy.
@@ -361,19 +425,19 @@ cycle() {
         if { echo "$MCc"; echo "^$C"; } | gu pack-objects --revs --stdout -q | sv_side "$ID" take > /dev/null \
             && sv_side "$ID" apply "$CD" "$C" "$MCc" < /dev/null > /dev/null; then
             ok_c=1
-            log "$R: to Claude: $(gu diff-tree -r --no-renames --name-only "$C" "$MCc" | head -5 | tr '\n' ' ')"
+            log "$RN: to Claude: $(gu diff-tree -r --no-renames --name-only "$C" "$MCc" | head -5 | tr '\n' ' ')"
         else
-            log "$R: the copy changed during the sync; trying again."
+            log "$RN: the copy changed during the sync; trying again."
         fi
     fi
 
     while IFS= read -r -d '' p; do
-        log "$R: not copied to your folder: $p (your .gitignore excludes a file there)"
+        log "$RN: not copied to your folder: $p (your .gitignore excludes a file there)"
     done < "$STATE/clashes"
     if [ -s "$STATE/conflicts" ] && { [ "$ok_u" = 1 ] || [ "$ok_c" = 1 ]; }; then
         gu update-ref "refs/keep/$C" "$C"
         while IFS= read -r -d '' p; do
-            log "$R: you and Claude both changed $p. Kept yours. Claude's version: git --git-dir=$(printf %q "$US") show $C:$(printf %q "$p")"
+            log "$RN: you and Claude both changed $p. Kept yours. Claude's version: git --git-dir=$(printf %q "$US") show $C:$(printf %q "$p")"
         done < "$STATE/conflicts"
         notify "You and Claude both changed the same lines in $(basename "$RD"). Kept yours. Details: $LOG"
     fi
@@ -386,7 +450,7 @@ cycle() {
 
 # Prepare one repository. The first time, the copy becomes your folder.
 start_repo() {
-    local common gitdir head origin t U C B UP CP
+    local common gitdir head origin history result t U C B UP CP
     local tips=()
     use "$1"
     common="$(git -C "$RD" rev-parse --path-format=absolute --git-common-dir)" || return 1
@@ -401,16 +465,28 @@ start_repo() {
 
     # The copy's own repository gets your branches and tags as a bundle, and
     # your origin URL without credentials. Your git settings and hooks stay here.
+    # A shallow or partial clone can't make a complete bundle; its history isn't
+    # sent. A failed transfer is logged and doesn't stop the sync.
     head="$(git -C "$RD" symbolic-ref -q HEAD || git -C "$RD" rev-parse -q --verify HEAD || true)"
     origin="$(git -C "$RD" remote get-url origin 2> /dev/null | sed -E 's#^([A-Za-z0-9+.-]+://)[^/@]*@#\1#' || true)"
+    history=1
+    if [ "$(git -C "$RD" rev-parse --is-shallow-repository)" = true ] || [ -n "$(git -C "$RD" config --get extensions.partialclone)" ]; then
+        history=0
+        log "$RN: the copy gets no history: shallow or partial clone"
+    fi
     if [ -f "$STATE/$ID.tips" ]; then
         while read -r t; do tips+=("^$t"); done < "$STATE/$ID.tips"
     fi
     if ! git -C "$RD" rev-list -n 1 --branches --tags ${tips[@]+"${tips[@]}"} > /dev/null 2>&1; then tips=(); fi
-    { if [ -n "$(git -C "$RD" rev-list -n 1 --branches --tags ${tips[@]+"${tips[@]}"})" ]; then
-          git -C "$RD" bundle create - --branches --tags ${tips[@]+"${tips[@]}"} 2> /dev/null
-      fi; } | sv_side "$ID" repo "$CD" "$head" "$origin" > /dev/null || return 1
-    git -C "$RD" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$STATE/$ID.tips"
+    rm -f "$STATE/$ID.bundled"
+    result="$( { if [ "$history" = 1 ] && [ -n "$(git -C "$RD" rev-list -n 1 --branches --tags ${tips[@]+"${tips[@]}"})" ]; then
+                     git -C "$RD" bundle create - --branches --tags ${tips[@]+"${tips[@]}"} && touch "$STATE/$ID.bundled"
+                 fi; } | sv_side "$ID" repo "$CD" "$head" "$origin")" || return 1
+    if [ "$history" = 1 ] && { [ "$result" = fetched ] || { [ "$result" = none ] && [ ! -f "$STATE/$ID.bundled" ]; }; }; then
+        git -C "$RD" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$STATE/$ID.tips"
+    elif [ "$history" = 1 ]; then
+        log "$RN: the copy's history wasn't updated ($result)"
+    fi
 
     touch "$STATE/$ID.recent"
     if [ -f "$ST" ] && read -r B UP CP < "$ST" && gu cat-file -e "$B" 2> /dev/null \
@@ -425,7 +501,8 @@ start_repo() {
     if [ -f "$gitdir/index" ]; then cp "$gitdir/index" "$UI"; fi
     t="$(u_tree)" || return 1
     U="$(commit "$t")" || return 1
-    C="$(sv_side "$ID" tree "$CD" < /dev/null)" || return 1
+    C="$(sv_side "$ID" tree "$CD" < /dev/null | sed -n 1p)" || return 1
+    case "$C" in *[!0-9a-f]*|'') return 1 ;; esac
     sv_side "$ID" send "$C" < /dev/null | gu unpack-objects -q --strict || return 1
     { echo "$U"; echo "^$C"; } | gu pack-objects --revs --stdout -q | sv_side "$ID" take > /dev/null || return 1
     sv_side "$ID" reset "$CD" "$U" < /dev/null > /dev/null || return 1
@@ -481,9 +558,19 @@ fi
 
 lock "$STATE/session" "A session for this folder is running already. To review held changes, run: sv-claude sync"
 echo "Syncing $SRC ($WHAT) with $COPY"
+# On failure, show the last errors of both sides. SandVault's side is shown as
+# data: printable characters only, each line marked.
 for r in "${REPOS[@]}"; do
-    start_repo "$r" || { echo "Couldn't prepare $r. See $LOG" >&2; exit 1; }
+    if ! start_repo "$r" 2> "$STATE/start.err"; then
+        use "$r"
+        { echo "Couldn't prepare $(basename "$RD"):"
+          tail -n 5 "$STATE/start.err" | sed 's/^/  /'
+          sv_side "$ID" errors < /dev/null | tr -cd '[:print:]\n' | sed 's/^/  SandVault side: /'
+        } | tee -a "$LOG" >&2 || true
+        exit 1
+    fi
 done
+log "started: $WHAT"
 rm -f "$STATE/stop"
 sync_loop >> "$LOG" 2>&1 &
 LOOP=$!
@@ -509,7 +596,12 @@ for r in "${REPOS[@]}"; do
         cycle "$r" auto || echo "Couldn't sync $r. See $LOG" >&2
     fi
 done
-if pgrep -u "$SVUSER" > /dev/null 2>&1; then
-    echo "Programs are still running as SandVault's account. What they change in the copy reaches your folder at the next start."
+log "stopped"
+# Programs still running as SandVault's account, other than macOS's own agents.
+LEFT="$(ps -u "$SVUSER" -o pid=,comm= 2> /dev/null | awk '$2 !~ "^/(System|usr/libexec|usr/sbin)/"' || true)"
+if [ -n "$LEFT" ]; then
+    echo "Still running as $SVUSER:"
+    printf '%s\n' "$LEFT" | sed 's/^ */  /'
+    echo "Changes they make to this copy reach your folder at the next start."
 fi
 echo "Synced. Log: $LOG"
