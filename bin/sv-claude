@@ -597,8 +597,10 @@ for r in "${REPOS[@]}"; do
     fi
 done
 log "stopped"
-# Programs still running as SandVault's account, other than macOS's own agents.
-LEFT="$(ps -u "$SVUSER" -o pid=,comm= 2> /dev/null | awk '$2 !~ "^/(System|usr/libexec|usr/sbin)/"' || true)"
+# Programs still running as SandVault's account, other than macOS's own agents,
+# its Docker VM, and sv-claude's own helpers.
+LEFT="$(ps -u "$SVUSER" -o pid=,command= 2> /dev/null \
+    | awk '$2 !~ "^/(System|usr/libexec|usr/sbin)/" && $0 !~ "limactl|/\\.colima/|sv-side"' | cut -c1-120 || true)"
 if [ -n "$LEFT" ]; then
     echo "Still running as $SVUSER:"
     printf '%s\n' "$LEFT" | sed 's/^ */  /'

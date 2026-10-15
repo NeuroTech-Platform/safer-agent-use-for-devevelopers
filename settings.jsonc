@@ -42,8 +42,26 @@
     "ask": [
       // Ask before any command runs outside the sandbox, in every mode.
       "Bash(dangerouslyDisableSandbox:true)",
-      // Ask before docker exec: it can run anything in any container.
+      // Ask before docker commands that run code: in a container, or while building an image.
+      "Bash(docker run *)",
       "Bash(docker exec *)",
+      "Bash(docker build *)",
+      "Bash(docker buildx build *)",
+      "Bash(docker compose *)",
+      // Ask before commands that run code in a cluster, or change one. Reads, such as
+      // kubectl get and helm list, don't ask.
+      "Bash(kubectl apply *)",
+      "Bash(kubectl create *)",
+      "Bash(kubectl run *)",
+      "Bash(kubectl exec *)",
+      "Bash(kubectl delete *)",
+      "Bash(helm install *)",
+      "Bash(helm upgrade *)",
+      "Bash(helm uninstall *)",
+      "Bash(kind create *)",
+      "Bash(kind delete *)",
+      "Bash(ct install *)",
+      "Bash(cilium install *)",
       // Ask before every gh command: it runs outside the sandbox, with your GitHub login.
       "Bash(gh *)"
     ],
@@ -63,10 +81,11 @@
     // Claude may retry a blocked command outside the sandbox. The ask rule above
     // makes you approve each retry.
     "allowUnsandboxedCommands": true,
-    // These run outside the sandbox, with your full access. docker doesn't work in the
-    // sandbox. gh can't read its login there, because the read block hides your home
-    // folder. The ask rule above makes you approve each gh call.
-    "excludedCommands": ["docker ps *", "docker logs *", "docker exec *", "gh *"],
+    // These run outside the sandbox, with your full access. docker needs its daemon's
+    // socket and its config in your home folder, which the sandbox hides. gh can't
+    // read its login there, and the Kubernetes tools can't read ~/.kube/config.
+    // The ask rules above cover the risky calls; auto mode reviews the others.
+    "excludedCommands": ["docker *", "gh *", "kind *", "kubectl *", "helm *", "ct *", "cilium *"],
 
     "filesystem": {
       // npm keeps its cache in your home folder, which the read block hides.

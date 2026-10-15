@@ -184,6 +184,27 @@ To run one command instead, such as `sv-claude shell npm install`, put it after 
 
 The sync also runs during `sv-claude shell`. Commands you type there run as SandVault's account, so they can't reach your home folder. Claude Code's sandbox and its network limits don't apply to them.
 
+### Tools in SandVault
+
+Programs from Homebrew work: SandVault's account can read `/opt/homebrew`. What lives in your home folder doesn't carry over, because that account has its own:
+
+- **Configs and logins**, such as `~/.kube/config`, `~/.npmrc` or a `gh` token: put a copy in `/Users/Shared/sv-$USER/user/`, at the same path under it. SandVault copies that folder into its account's home at each start. Give them the least rights that work: Claude can read them there.
+- **Daemons**, such as Docker's: that account needs its own. See below.
+- **`open`, `osascript` and browsers**: don't work. The account has no GUI session.
+- **`brew install`**: the admin account does it.
+- **Ports**: a server started in the copy is reachable from your browser at `localhost`, if `sandbox.network.allowLocalBinding` is `true` in `settings.jsonc`.
+
+#### Docker in this setup
+
+Your own Docker VM, Colima or Docker Desktop, mounts your home folder. Sharing it with SandVault's account would give Claude your files. Instead, give that account its own Colima VM, once, from any project folder. The first line creates it with only the shared folder mounted, so containers can't read that account's home folder and its login token. The second line gives it `docker compose`:
+
+```bash
+sv-claude shell colima start --mount "/Users/Shared/sv-$USER:w"
+sv-claude shell sh -c 'mkdir -p ~/.docker/cli-plugins && ln -sfn /opt/homebrew/opt/docker-compose/bin/docker-compose ~/.docker/cli-plugins/docker-compose'
+```
+
+For `kind` clusters, add `--cpu 4 --memory 6` to the first line: Colima's default of 2 GB is too small. The VM keeps running after sessions; `sv-claude shell colima stop` stops it, and after a restart of the Mac, `sv-claude shell colima start` brings it back. To log in to a registry, run `sv-claude shell docker login …` with a pull-only token: the credential is stored, readable, in that account's `~/.docker/config.json`. `docker buildx` isn't installed with Homebrew's `docker`: the admin runs `brew install docker-buildx`, then you link `docker-buildx` like `docker-compose` above. The settings run every `docker` command outside Claude's sandbox, and ask you before `run`, `exec`, `build`, `buildx build` and `compose`. `kind`, `kubectl`, `helm`, `ct` and `cilium` run outside it too, and ask before they run code in a cluster or change one.
+
 ## 6. Verify
 
 In a session started with `sv-claude`, run the checks in the [README](../README.md#verify).

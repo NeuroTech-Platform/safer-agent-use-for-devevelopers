@@ -12,7 +12,7 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
 - Claude's file tools can't read outside the project.
 - SSH keys and cloud credentials are blocked. `.env` files are blocked for Claude's file tools and for commands like `cat`. Token variables are removed from shell commands.
 - Claude can't change Claude Code's settings files or your personal instructions (`~/.claude/CLAUDE.md`, `~/.claude/rules/`).
-- Claude asks before it retries a command outside the sandbox, and before `docker exec` and every `gh` command.
+- Claude asks before it retries a command outside the sandbox, before docker commands that run code (`run`, `exec`, `build`, `compose`), before commands that run code in a cluster or change one (`kubectl apply`, `helm install`, `kind create`, and the like), and before every `gh` command.
 - Sessions start in auto mode: a classifier approves routine actions and blocks risky ones. Bypass mode is off.
 - Verbose view shows every tool call in full.
 - Claude Code's telemetry is off: no usage metrics, error reports, surveys or feedback uploads. [docs/data.md](docs/data.md) lists what is still sent.
@@ -25,7 +25,7 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
 - Hooks, MCP servers and plugins run with your full access. Install only what you trust.
 - Settings in a repository's `.claude/` folder can switch the sandbox off, and the trust dialog doesn't show it. Read that folder before you trust a repository, or use [managed settings](docs/managed-settings.md).
 - Claude's web tool (WebFetch) ignores the host list. In auto mode the classifier reviews fetches.
-- Commands you approve outside the sandbox, the `docker` and `gh` commands, and commands you type after `!` run with your full access.
+- Commands you approve outside the sandbox, the `docker`, `gh`, `kind`, `kubectl`, `helm`, `ct` and `cilium` commands, and commands you type after `!` run with your full access.
 - Claude sends what it reads to Anthropic. See [docs/data.md](docs/data.md).
 
 ## Install
@@ -102,7 +102,7 @@ To let routine commands run without auto mode's check, list them in the project'
 | --- | --- |
 | A host is refused | Add it to `sandbox.network.allowedDomains` in `settings.jsonc` and repeat the install. Repository settings can't add hosts. |
 | A tool or cache in your home folder is missing or read-only (nvm, pyenv, cargo, pip) | Add its folder to `sandbox.filesystem.allowRead` in `settings.jsonc`, and to `allowWrite` if it writes there. Use `~/` paths. Repeat the install. |
-| A tool can't read its login or config in your home folder, such as `gcloud` or `kubectl` | Add it to `sandbox.excludedCommands` in `settings.jsonc`, for example `"gcloud *"`, and repeat the install. It then runs outside the sandbox with your full access, and auto mode reviews each call. To approve each call yourself, also add an ask rule such as `"Bash(gcloud *)"`. |
+| A tool can't read its login or config in your home folder, such as `gcloud` | Add it to `sandbox.excludedCommands` in `settings.jsonc`, for example `"gcloud *"`, and repeat the install. It then runs outside the sandbox with your full access, and auto mode reviews each call. To approve each call yourself, also add an ask rule such as `"Bash(gcloud *)"`. |
 | `git push` or `git pull` fails | The sandbox hides your credentials. Approve the retry outside the sandbox, or run the command yourself. |
 | A script or test can't write to `/tmp`, or `mktemp` fails with `Operation not permitted` | Sandboxed commands write only in the project, `$TMPDIR` and the npm cache. Make the script use `$TMPDIR`, as Python's `tempfile` and Node's `os.tmpdir()` do. On macOS, `mktemp` without a template doesn't use `$TMPDIR`: give it one, such as `mktemp "${TMPDIR:-/tmp}/name.XXXXXX"`. |
 | A command can't reach a server on `localhost` | macOS: set `sandbox.network.allowLocalBinding` to `true`; this opens every local port. Linux and WSL2: add the command to `sandbox.excludedCommands`; it then runs with your full access. |
