@@ -1,6 +1,6 @@
 # Windows
 
-Claude Code's sandbox doesn't run on native Windows. With these settings, Claude Code won't start there. Use WSL2, the Linux environment built into Windows.
+Claude Code's sandbox doesn't run on native Windows. With these settings, Claude Code won't start there, in a terminal or in the Claude Desktop app. Use WSL2, the Linux environment built into Windows.
 
 ## Install WSL2
 
@@ -25,7 +25,7 @@ Open the WSL terminal (Ubuntu by default) and do everything there:
 1. Follow [linux.md](linux.md): components, Claude Code, check.
 2. Install the settings ([README](../README.md#install), step 2). They go in your WSL home folder, not in `C:\Users\...`.
 
-Start `claude` from the WSL terminal, not from PowerShell or CMD.
+Start `claude` from the WSL terminal, not from PowerShell or CMD. In the Claude Desktop app, pick a WSL distribution in the Code tab's environment dropdown: the session then runs inside it, with the settings installed there.
 
 The seccomp filter matters most here: without it, sandboxed commands can start Windows programs, such as `cmd.exe`, outside the sandbox.
 

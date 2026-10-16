@@ -20,6 +20,8 @@ The settings turn off Claude Code's telemetry:
 
 This also turns off feature flags, so Remote Control and a few extras stop working.
 
+The jsonc `env` block also reaches the Code tab's sessions in the Claude Desktop app. What the app itself sends is outside Claude Code's settings.
+
 Still sent:
 
 - Before each WebFetch, the hostname (not the full URL) goes to Anthropic for a safety check. `"skipWebFetchPreflight": true` turns this off, and the protection with it.

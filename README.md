@@ -2,7 +2,7 @@
 
 These are settings and setup steps that limit what Claude Code can read, change and reach on your computer. For developers on macOS, Linux and Windows.
 
-Requires Claude Code 2.1.285 or later. Check with `claude --version`.
+Requires Claude Code 2.1.285 or later. Check with `claude --version`. The Claude Desktop app downloads its own copy of Claude Code; keep the app up to date.
 
 ## What you get
 
@@ -26,6 +26,7 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
 - Settings in a repository's `.claude/` folder can switch the sandbox off, and the trust dialog doesn't show it. Read that folder before you trust a repository, or use [managed settings](docs/managed-settings.md).
 - Claude's web tool (WebFetch) ignores the host list. In auto mode the classifier reviews fetches.
 - Commands you approve outside the sandbox, the `docker`, `gh`, `kind`, `kubectl`, `helm`, `ct` and `cilium` commands, and commands you type after `!` run with your full access.
+- Cowork and cloud sessions. See [Claude Desktop](#claude-desktop).
 - Claude sends what it reads to Anthropic. See [docs/data.md](docs/data.md).
 
 ## Install
@@ -50,9 +51,9 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`.
 
 ## Verify
 
-Start Claude in a project folder: `claude`, or `sv-claude` on macOS with SandVault.
+Start Claude in a project folder: `claude`, `sv-claude` on macOS with SandVault, or the folder in the Desktop app's Code tab with the **Local** environment.
 
-Run `/sandbox`. The Config tab must list `github.com` and the other allowed hosts. On Linux and WSL2, a Dependencies tab means a component is missing.
+In a terminal, run `/sandbox`. The Config tab must list `github.com` and the other allowed hosts. On Linux and WSL2, a Dependencies tab means a component is missing.
 
 Then ask Claude to run each command:
 
@@ -68,6 +69,15 @@ Then ask Claude to run each command:
 Last, ask Claude to read `~/.zshrc` or another file in your home folder. It must refuse.
 
 If Claude asks to retry a test outside the sandbox, answer No. If `touch` succeeds, the sandbox is not running: delete `~/sandbox-probe` and fix the setup before you use Claude.
+
+## Claude Desktop
+
+The Code tab's local sessions read the same files as `claude`: `~/.claude/settings.json` and `~/.claude/rules/`. They run as you, outside a sandbox.
+
+- The mode selector next to the send button: a mode you pick is remembered for that folder and takes precedence over the settings' auto mode, except Plan.
+- Windows: pick a WSL distribution in the environment dropdown. A session on Windows itself has no sandbox and doesn't start with these settings.
+- A cloud session runs on Anthropic's servers and reads the repository's `.claude/settings.json`, not the settings on your computer. An SSH session reads the remote machine's `~/.claude/settings.json`.
+- Cowork, the app's other tab, doesn't read `~/.claude`. Only [managed settings](docs/managed-settings.md) reach it.
 
 ## Rules
 

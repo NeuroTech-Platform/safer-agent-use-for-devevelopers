@@ -97,7 +97,7 @@ cp rules/sandbox.md "/Users/Shared/sv-$USER/user/.claude/rules/"
 Repeat this after every change to `settings.jsonc` or `rules/sandbox.md`.
 
 > [!NOTE]
-> Claude Code in VS Code, or started with `claude` in a terminal, runs as you, outside SandVault. Install the settings in your own account too: [README](../README.md#install), step 2.
+> Claude Code in VS Code, in the Claude Desktop app, or started with `claude` in a terminal, runs as you, outside SandVault. Install the settings in your own account too: [README](../README.md#install), step 2.
 
 ## 3. Log in
 

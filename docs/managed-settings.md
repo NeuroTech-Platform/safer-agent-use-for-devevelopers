@@ -2,6 +2,8 @@
 
 A repository's `.claude/settings.json` can override your `~/.claude/settings.json`. Managed settings can't be overridden, and only root can change them. They apply to every account on the computer, including SandVault's.
 
+They also reach Cowork tasks in the Claude Desktop app, which read no `~/.claude/settings.json`. Cowork runs shell commands in its own virtual machine. On Windows, the `sandbox` block stops Cowork tasks with `Sandbox required but unavailable`: remove it from the Windows managed file if you need to use it.
+
 ## Install
 
 From an admin account, in this repository's folder:
