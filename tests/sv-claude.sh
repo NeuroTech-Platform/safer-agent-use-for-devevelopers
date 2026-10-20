@@ -174,11 +174,17 @@ go 2; wait
 echo "### D. Folder of repositories"
 P="$T/ws"; mkdir -p "$P"; mkrepo "$P/repoA"; mkrepo "$P/repoB"; echo top > "$P/top.txt"; FLAGS="$T/flags-D"; mkdir -p "$FLAGS"
 C="$(copy_of "$P")"
-printf 'step 1\necho claude >> repoA/a.txt\necho claude >> repoB/a.txt\nstep 2\n' > "$T/scenario-D"
-run_bg "$P" "$T/scenario-D" "$T/D.out"; at 1; go 1
-wait_for "grep -qx claude '$P/repoA/a.txt' && grep -qx claude '$P/repoB/a.txt'"
+printf 'step 1\necho claude >> repoA/a.txt\necho claude >> repoB/a.txt\nmkdir -p .ai; echo draft > .ai/draft.md\nmkdir new-repo; git -C new-repo init -q; echo x > new-repo/x.txt\nstep 2\n' > "$T/scenario-D"
+run_bg "$P" "$T/scenario-D" "$T/D.out"; at 1
+check "top-level file in the copy"       "grep -qx top '$C/top.txt'"
+go 1
+wait_for "grep -qx claude '$P/repoA/a.txt' && grep -qx claude '$P/repoB/a.txt' && [ -f '$P/.ai/draft.md' ]"
 check "both repositories synced"         "grep -qx claude '$P/repoA/a.txt' && grep -qx claude '$P/repoB/a.txt'"
-check "top-level file stays home"        "[ ! -e '$C/top.txt' ]"
+check "Claude's top-level file reached you" "grep -qx draft '$P/.ai/draft.md'"
+check "a repository Claude adds stays in the copy" "[ ! -e '$P/new-repo' ]"
+echo you > "$P/notes.md"
+wait_for "grep -qsx you '$C/notes.md'";  check "your top-level file reached Claude" "grep -qsx you '$C/notes.md'"
+check "your git index untouched, both repositories" "[ -z \"\$(git -C '$P/repoA' diff --cached --name-only)\" ] && [ -z \"\$(git -C '$P/repoB' diff --cached --name-only)\" ]"
 go 2; wait
 
 echo "### E. Repository without commits, and a crashed run's lock"
@@ -241,9 +247,44 @@ go 3; at 4
 wait_for "grep -q 'git state of branchy' '$NOTES'"
 check "branch switch held, you notified" "[ \"\$(head -1 '$P/b.txt')\" = 1 ] && grep -q 'branch: feat' '$NOTES'"
 SYNC_J="$(sv_sync "$P" y)"; echo "  sv-claude sync, answering y:"; printf '%s\n' "$SYNC_J" | head -6 | show
-check "review names both branches"       "printf '%s' \"\$SYNC_J\" | grep -q 'The copy is on feat; your folder is on main'"
+check "review names both branches"       "printf '%s' \"\$SYNC_J\" | grep -q 'branch: feat). Your folder is on main'"
 check "applied after review"             "[ \"\$(cat '$P/b.txt')\" = feat ]"
 go 4; wait
+
+echo "### K. Your branch switches and commits reach the copy as such"
+P="$T/follow"; mkrepo "$P"; S="$(state_of "$P")"; C="$(copy_of "$P")"
+git -C "$P" switch -q -c feat; echo feat > "$P/b.txt"; git -C "$P" commit -qam feat; git -C "$P" switch -q main
+FLAGS="$T/flags-K"; mkdir -p "$FLAGS"; printf 'step 1\nstep 2\n' > "$T/scenario-K"
+run_bg "$P" "$T/scenario-K" "$T/K.out"; at 1; go 1
+git -C "$P" switch -q feat
+wait_for "[ \"\$(git -C '$C' symbolic-ref -q --short HEAD)\" = feat ] && grep -qx feat '$C/b.txt'"
+check "copy on your new branch, with its files, clean" "[ \"\$(git -C '$C' symbolic-ref -q --short HEAD)\" = feat ] && grep -qx feat '$C/b.txt' && git -C '$C' diff --quiet HEAD"
+echo more >> "$P/a.txt"; git -C "$P" commit -qam more
+wait_for "[ \"\$(git -C '$C' rev-parse HEAD)\" = \"\$(git -C '$P' rev-parse HEAD)\" ] && grep -qx more '$C/a.txt'"
+check "your commit is the copy's HEAD, clean" "[ \"\$(git -C '$C' rev-parse HEAD)\" = \"\$(git -C '$P' rev-parse HEAD)\" ] && git -C '$C' diff --quiet HEAD"
+git -C "$P" switch -q -c topic
+wait_for "[ \"\$(git -C '$C' symbolic-ref -q --short HEAD)\" = topic ]"
+check "a new branch without commits exists in the copy" "[ \"\$(git -C '$C' rev-parse -q --verify topic)\" = \"\$(git -C '$P' rev-parse topic)\" ]"
+check "no hold from your moves"          "! grep -q 'git state of follow' '$NOTES'"
+go 2; wait
+
+echo "### L. A branch switch by Claude between sessions is held at the next start"
+P="$T/between"; mkrepo "$P"; S="$(state_of "$P")"; C="$(copy_of "$P")"
+git -C "$P" switch -q -c feat; echo feat > "$P/b.txt"; git -C "$P" commit -qam feat; git -C "$P" switch -q main
+FLAGS="$T/flags-L"; mkdir -p "$FLAGS"; printf 'step 1\n' > "$T/scenario-L1"
+run_bg "$P" "$T/scenario-L1" "$T/L1.out"; at 1; go 1; wait
+git -C "$C" checkout -q feat   # a process Claude left running
+git -C "$C" update-ref refs/remotes/origin/main "$(git -C "$C" rev-parse main)"
+FLAGS="$T/flags-L2"; mkdir -p "$FLAGS"; printf 'step 1\n' > "$T/scenario-L2"
+run_bg "$P" "$T/scenario-L2" "$T/L2.out"; at 1
+wait_for "grep -q 'git state of between' '$NOTES'"
+check "switch between sessions held, you notified" "[ \"\$(head -1 '$P/b.txt')\" = 1 ] && grep -q 'git state of between' '$NOTES'"
+check "copy back on your branch"         "[ \"\$(git -C '$C' symbolic-ref -q --short HEAD)\" = main ]"
+check "copy keeps its origin/* refs across starts" "git -C '$C' rev-parse -q --verify refs/remotes/origin/main > /dev/null"
+git -C "$P" switch -q feat
+wait_for "grep -q 'the hold ends' '$S/sync.log'"
+check "after your switch, the hold ends" "grep -q 'the hold ends' '$S/sync.log' && [ \"\$(git -C '$C' symbolic-ref -q --short HEAD)\" = feat ] && git -C '$C' diff --quiet HEAD"
+go 1; wait
 
 echo "### F. Your account never touches the copy"
 grep -n -E '"\$(COPY|CD)|\$COPY/|\$CD/' "${SV_CLAUDE_SCRIPT:-$HERE/../bin/sv-claude}" | show

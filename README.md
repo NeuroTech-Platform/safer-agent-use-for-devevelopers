@@ -35,18 +35,22 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`. The Claude
    - macOS: [docs/macos.md](docs/macos.md)
    - Linux: [docs/linux.md](docs/linux.md)
    - Windows: [docs/windows.md](docs/windows.md)
-2. From this folder, install the settings and the instructions for Claude. Nothing applies until you do: Claude Code doesn't read `settings.jsonc` itself. `grep` removes the comment lines, because Claude Code reads strict JSON only:
+2. From this folder, install the settings and the instructions for Claude into the account where Claude runs sandboxed. On macOS with SandVault, that's SandVault's account: [macOS step 2](docs/macos.md#2-install-the-settings) replaces this step. Nothing applies until you do: Claude Code doesn't read `settings.jsonc` itself. `grep` removes the comment lines, because Claude Code reads strict JSON only:
 
    ```bash
    mkdir -p ~/.claude/rules
    [ -f ~/.claude/settings.json ] && [ ! -f ~/.claude/settings.json.bak ] && cp ~/.claude/settings.json ~/.claude/settings.json.bak
    grep -v '^[[:space:]]*//' settings.jsonc > ~/.claude/settings.json
-   cp rules/sandbox.md ~/.claude/rules/
+   cp rules/sandbox.md rules/commands.md ~/.claude/rules/
    ```
 
    The first install saves your old settings in `settings.json.bak`. Move your own keys from there into `settings.jsonc`. Make every later change in `settings.jsonc` and repeat this step, because it overwrites `~/.claude/settings.json`.
 
-   [rules/sandbox.md](rules/sandbox.md) tells Claude how to write shell commands that work with these settings without extra prompts. Claude Code loads it in every session.
+   The files in [rules/](rules/) are instructions Claude Code loads in every session. `sandbox.md` tells Claude how to write shell commands that work with the sandbox without extra prompts. `commands.md` holds the rules that hold without the sandbox: legible commands, which commands you approve, `gh` usage. `sandvault.md` is for SandVault's account only. On a computer without these settings, install only `commands.md`:
+
+   ```bash
+   mkdir -p ~/.claude/rules && cp rules/commands.md ~/.claude/rules/
+   ```
 3. Run `claude doctor`. It must report no settings errors.
 
 ## Verify

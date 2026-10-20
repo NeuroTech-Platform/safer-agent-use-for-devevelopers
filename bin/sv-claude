@@ -26,21 +26,28 @@ case "$(cd "$HOME" && pwd -P)/" in
     "$SRC"/*) echo "Don't run this from your home folder. Run it from a repository, or a folder of repositories." >&2; exit 1 ;;
 esac
 
-# The repositories to sync: this folder, or each subfolder that is one.
+# The repositories to sync: this folder, or each subfolder that is one. In a
+# folder of repositories, the folder's own files are synced too, as a plain
+# folder: "." without a repository behind it.
 REPOS=()
+TOPX=()
+TOPDIR=0
 if [ -e "$SRC/.git" ]; then
     REPOS=(.)
     WHAT="this repository"
 else
     for d in "$SRC"/*/; do
-        if [ -e "$d.git" ]; then REPOS+=("$(basename "$d")"); fi
+        if [ -e "$d.git" ]; then REPOS+=("$(basename "$d")"); TOPX+=(":(literal)$(basename "$d")"); fi
     done
     WHAT="${#REPOS[@]} repositories"
+    TOPDIR=1
 fi
 if [ ${#REPOS[@]} -eq 0 ]; then
     echo "Run this from a repository's top folder, or a folder whose subfolders are repositories." >&2
     exit 1
 fi
+if [ "$TOPDIR" = 1 ]; then REPOS+=(.); fi
+plain() { [ "$R" = . ] && [ "$TOPDIR" = 1 ]; }  # the current entry is the plain top folder
 [ -d "$SHARED" ] || { echo "SandVault isn't set up for $USER. See docs/macos.md." >&2; exit 1; }
 
 # Your account never reads or writes the copy, because a link planted there could
@@ -124,17 +131,19 @@ g() {
         --attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904 --git-dir="$S" "$@"
 }
 case "$CMD" in
-    tree)  # tree DIR: the folder as git sees it, without .env files, as a commit
+    tree)  # tree DIR [PATH...]: the folder as git sees it, without .env files
+           # and the given paths (the repositories in a plain folder), as a commit
         cd "$1"
+        shift
         GIT_INDEX_FILE="$I" g --work-tree=. add -A --ignore-errors > /dev/null 2>&1 || true
-        GIT_INDEX_FILE="$I" g --work-tree=. rm --cached -r -q --ignore-unmatch -- \
-            ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example'
+        GIT_INDEX_FILE="$I" g --work-tree=. rm --cached -r -q -f --ignore-unmatch -- \
+            ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example' "$@"
         if ! t="$(GIT_INDEX_FILE="$I" g write-tree 2> /dev/null)"; then
             rm -f "$I"
             if [ -f "$D/$ID.last" ]; then GIT_INDEX_FILE="$I" g read-tree "$(cut -d' ' -f1 "$D/$ID.last")" 2> /dev/null || rm -f "$I"; fi
             GIT_INDEX_FILE="$I" g --work-tree=. add -A --ignore-errors > /dev/null 2>&1 || true
-            GIT_INDEX_FILE="$I" g --work-tree=. rm --cached -r -q --ignore-unmatch -- \
-                ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example'
+            GIT_INDEX_FILE="$I" g --work-tree=. rm --cached -r -q -f --ignore-unmatch -- \
+                ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example' "$@"
             t="$(GIT_INDEX_FILE="$I" g write-tree)"
         fi
         if [ -f "$D/$ID.last" ] && [ "$(cut -d' ' -f1 "$D/$ID.last")" = "$t" ]; then
@@ -145,13 +154,16 @@ case "$CMD" in
             echo "$c"
         fi
         # Second line: whether the copy's own HEAD moved since the last report.
-        if [ "$(git rev-parse -q --verify HEAD || true)" = "$(cat "$D/$ID.head" 2> /dev/null || true)" ]; then echo same; else echo moved; fi ;;
-    moved) # moved DIR: the copy's branch, then the files its HEAD's move changed, NUL-separated
+        if [ ! -e .git ] || { [ ! -s "$D/$ID.moved.paths" ] && [ "$(git rev-parse -q --verify HEAD || true)" = "$(cat "$D/$ID.head" 2> /dev/null || true)" ]; }; then echo same; else echo moved; fi ;;
+    moved) # moved DIR: the copy's branch, then the files its HEAD's moves changed, NUL-separated
         cd "$1"
         old="$(cat "$D/$ID.head" 2> /dev/null || true)"
         new="$(git rev-parse -q --verify HEAD || true)"
-        printf '%s\0' "$(git symbolic-ref -q --short HEAD || echo 'a detached HEAD')"
-        if [ -n "$old" ] && [ -n "$new" ]; then git diff --name-only -z --no-renames "$old" "$new" -- || true; fi
+        if [ -s "$D/$ID.moved.branch" ]; then head -1 "$D/$ID.moved.branch"; else git symbolic-ref -q --short HEAD || echo 'a detached HEAD'; fi | tr -d '\n'
+        printf '\0'
+        cat "$D/$ID.moved.paths" 2> /dev/null || true
+        if [ -n "$old" ] && [ -n "$new" ] && [ "$old" != "$new" ]; then git diff --name-only -z --no-renames "$old" "$new" -- || true; fi
+        rm -f "$D/$ID.moved.branch" "$D/$ID.moved.paths"
         echo "$new" > "$D/$ID.head" ;;
     send)  # send NEW [OLD]: the objects of NEW that OLD lacks, as a pack
         { echo "$1"; [ -z "${2:-}" ] || echo "^$2"; } | g pack-objects --revs --stdout -q ;;
@@ -175,8 +187,8 @@ case "$CMD" in
         g update-ref refs/keep "$1"
         if t="$(GIT_INDEX_FILE="$I" g write-tree 2> /dev/null)"; then g update-ref refs/keep-index "$t"; fi
         g gc -q --prune=now > /dev/null 2>&1 || true ;;
-    repo)  # repo DIR HEAD ORIGIN: the copy's own repository, from a bundle on stdin.
-           # Prints fetched, none or failed. A session starts with an empty error file.
+    repo)  # repo DIR HEAD COMMIT ORIGIN: the copy's own repository follows yours,
+           # from a bundle on stdin. Prints fetched, none or failed.
         : > "$D/$ID.err"
         mkdir -p "$1"
         cd "$1"
@@ -184,6 +196,14 @@ case "$CMD" in
             rm -rf .git
             git init -q
             touch "$D/$ID.made"
+        fi
+        # A HEAD move by Claude since the last report, for instance while no
+        # session ran, is kept for the next sync's check.
+        old="$(git rev-parse -q --verify HEAD || true)"
+        rec="$(cat "$D/$ID.head" 2> /dev/null || true)"
+        if [ -n "$old" ] && [ -n "$rec" ] && [ "$old" != "$rec" ]; then
+            git symbolic-ref -q --short HEAD > "$D/$ID.moved.branch" || echo 'a detached HEAD' > "$D/$ID.moved.branch"
+            git diff --name-only -z --no-renames "$rec" "$old" -- >> "$D/$ID.moved.paths" || true
         fi
         cat > "$D/$ID.bundle"
         result=none
@@ -195,16 +215,22 @@ case "$CMD" in
             fi
         fi
         rm -f "$D/$ID.bundle"
-        old="$(git rev-parse -q --verify HEAD || true)"
         case "$2" in
-            refs/heads/*) git symbolic-ref HEAD "$2" ;;
+            refs/heads/*)
+                # Your branch, at your commit, also when the bundle brought no new commit.
+                if [ -n "$3" ] && git cat-file -e "$3^{commit}" 2> /dev/null; then git update-ref "$2" "$3"; fi
+                git symbolic-ref HEAD "$2" ;;
             ?*) git update-ref --no-deref HEAD "$2" || true ;;
         esac
         new="$(git rev-parse -q --verify HEAD || true)"
         # A new repository has an empty index; a moved HEAD needs a new one.
         if [ -n "$new" ] && { [ "$old" != "$new" ] || [ -z "$(git ls-files | head -c 1)" ]; }; then git read-tree HEAD; fi
-        git remote remove origin > /dev/null 2>&1 || true
-        if [ -n "$3" ]; then git remote add origin "$3"; fi
+        # The URL changes in place, so the copy keeps the origin/* refs Claude fetched.
+        if [ -n "$4" ]; then
+            git remote set-url origin "$4" 2> /dev/null || git remote add origin "$4"
+        else
+            git remote remove origin > /dev/null 2>&1 || true
+        fi
         git rev-parse -q --verify HEAD > "$D/$ID.head" || : > "$D/$ID.head"
         echo "$result" ;;
     errors) # errors: the last errors of this side, then forget them
@@ -235,10 +261,15 @@ notify() {  # a macOS notification; the text is passed as data, never as script
 }
 
 u_tree() {  # your folder as git sees it, without .env files, as a tree
+    local -a out=()
+    if plain; then out=("${TOPX[@]}"); fi
     ( cd "$RD" || exit 1
       GIT_INDEX_FILE="$UI" gu --work-tree=. add -A --ignore-errors > /dev/null 2>&1 || true
-      GIT_INDEX_FILE="$UI" gu --work-tree=. rm --cached -r -q --ignore-unmatch -- "${NOSECRETS[@]}" || exit 1
+      GIT_INDEX_FILE="$UI" gu --work-tree=. rm --cached -r -q -f --ignore-unmatch -- "${NOSECRETS[@]}" ${out[@]+"${out[@]}"} || exit 1
       GIT_INDEX_FILE="$UI" gu write-tree ) || { rm -f "$UI"; return 1; }
+}
+copy_tree() {  # the copy as git sees it, as a commit, then same or moved
+    if plain; then sv_side "$ID" tree "$CD" "${TOPX[@]}" < /dev/null; else sv_side "$ID" tree "$CD" < /dev/null; fi
 }
 commit() {  # commit TREE [OLD]: OLD if it holds TREE, else a new commit
     if [ -n "${2:-}" ] && [ "$(gu rev-parse "$2^{tree}")" = "$1" ]; then echo "$2"; else gu commit-tree "$1" -m sync < /dev/null; fi
@@ -296,10 +327,11 @@ review() {  # show what would change in your folder, and ask
     local answer
     if [ "$R" != . ]; then echo "== $R"; fi
     if [ -f "$STATE/$ID.githold" ]; then
-        local cb
+        local cb ub
         cb="$(cat "$STATE/$ID.githold")"
-        echo "Claude changed the copy's git state. The copy is on $cb; your folder is on $(git -C "$RD" symbolic-ref -q --short HEAD || echo 'a detached HEAD')."
-        if [ "$cb" != 'a detached HEAD' ]; then
+        ub="$(git -C "$RD" symbolic-ref -q --short HEAD || echo 'a detached HEAD')"
+        echo "Claude changed the copy's git state (branch: $cb). Your folder is on $ub."
+        if [ "$cb" != 'a detached HEAD' ] && [ "$cb" != "$ub" ]; then
             echo "To follow with your folder instead, answer N, run the line below, then sv-claude sync:"
             printf '  git -C %q switch %q\n' "$RD" "$cb"
         fi
@@ -320,14 +352,22 @@ review() {  # show what would change in your folder, and ask
 # sync, then update each side, unless a file changed there meanwhile. HOW is
 # auto, or ask to review Claude's changes first.
 cycle() {
-    local how="$2" B UP CP Ut U C Cs M1 Mp MU MUc="" MCt MCc nd nc rd rn now p rc out branch ok_u=0 ok_c=0 allow=1
+    local how="$2" B UP CP Ut U C Cs M1 Mp MU MUc="" MCt MCc nd nc rd rn now p rc out branch uh ok_u=0 ok_c=0 allow=1
     use "$1"
     read -r B UP CP < "$ST" || return 1
+    # The copy's repository follows your HEAD: a branch switch, a commit or a
+    # pull in your folder is one in the copy too, before its files arrive.
+    if ! plain; then
+        uh="$(git -C "$RD" symbolic-ref -q HEAD || git -C "$RD" rev-parse -q --verify HEAD || true) $(git -C "$RD" rev-parse -q --verify HEAD || true)"
+        if [ "$uh" != "$(cat "$STATE/$ID.uhead" 2> /dev/null || true)" ]; then
+            if send_history; then log "$RN: the copy follows your HEAD: ${uh%% *} $(printf '%s' "${uh##* }" | cut -c1-7)"; else log "$RN: the copy couldn't follow your HEAD"; fi
+        fi
+    fi
     # A lost index starts again from the last sync, so .gitignore can't hide files.
     if [ ! -f "$UI" ]; then GIT_INDEX_FILE="$UI" gu read-tree "$UP" 2> /dev/null || rm -f "$UI"; fi
     Ut="$(u_tree)" || { log "$RN: can't read your folder"; return 1; }
     U="$(commit "$Ut" "$UP")" || return 1
-    out="$(sv_side "$ID" tree "$CD" < /dev/null)" || { log "$RN: can't read the copy"; return 1; }
+    out="$(copy_tree)" || { log "$RN: can't read the copy"; return 1; }
     C="$(printf '%s\n' "$out" | sed -n 1p)"
     case "$C" in *[!0-9a-f]*|'') log "$RN: bad data from SandVault"; return 1 ;; esac
     if [ "$C" != "$CP" ]; then
@@ -386,6 +426,12 @@ cycle() {
     clashes "$U" "$Mp" > "$STATE/clashes" || { log "$RN: can't check your folder"; return 1; }
     MU="$(tree_with "$Mp" "$U" "$STATE/clashes")" || { log "$RN: can't build your folder's tree"; return 1; }
     MCt="$(tree_with "$Mp" "$C" "$STATE/copyonly")" || { log "$RN: can't build the copy's tree"; return 1; }
+    # A hold with nothing left to apply ends, for instance after you switched
+    # your folder to the copy's branch.
+    if [ -f "$STATE/$ID.githold" ] && [ "$MU" = "$Ut" ]; then
+        rm -f "$STATE/$ID.githold" "$STATE/$ID.held"
+        log "$RN: your folder has Claude's held changes; the hold ends"
+    fi
 
     # Held for your review: SV_CLAUDE_REVIEW=1, or many deletions or changes
     # within a minute.
@@ -448,32 +494,19 @@ cycle() {
     echo "$B $UP $CP" > "$ST"
 }
 
-# Prepare one repository. The first time, the copy becomes your folder.
-start_repo() {
-    local common gitdir head origin history result t U C B UP CP
+no_history() {  # a shallow or partial clone can't make a complete bundle
+    [ "$(git -C "$RD" rev-parse --is-shallow-repository)" = true ] || [ -n "$(git -C "$RD" config --get extensions.partialclone)" ]
+}
+# The copy's own repository follows yours: your branches and tags as a bundle,
+# your HEAD, and your origin URL without credentials. Your git settings and
+# hooks stay here. A failed transfer is logged and doesn't stop the sync.
+send_history() {
+    local head hc origin history=1 result t
     local tips=()
-    use "$1"
-    common="$(git -C "$RD" rev-parse --path-format=absolute --git-common-dir)" || return 1
-    gitdir="$(git -C "$RD" rev-parse --path-format=absolute --git-dir)" || return 1
-    if [ "$(git -C "$RD" rev-parse --show-object-format)" != sha1 ]; then
-        echo "sv-claude supports SHA-1 repositories only: $RD" >&2
-        return 1
-    fi
-    [ -d "$US" ] || git init -q --bare "$US"
-    echo "$common/objects" > "$US/objects/info/alternates"
-    if [ -f "$common/info/exclude" ]; then cp "$common/info/exclude" "$US/info/exclude"; fi
-
-    # The copy's own repository gets your branches and tags as a bundle, and
-    # your origin URL without credentials. Your git settings and hooks stay here.
-    # A shallow or partial clone can't make a complete bundle; its history isn't
-    # sent. A failed transfer is logged and doesn't stop the sync.
     head="$(git -C "$RD" symbolic-ref -q HEAD || git -C "$RD" rev-parse -q --verify HEAD || true)"
+    hc="$(git -C "$RD" rev-parse -q --verify HEAD || true)"
     origin="$(git -C "$RD" remote get-url origin 2> /dev/null | sed -E 's#^([A-Za-z0-9+.-]+://)[^/@]*@#\1#' || true)"
-    history=1
-    if [ "$(git -C "$RD" rev-parse --is-shallow-repository)" = true ] || [ -n "$(git -C "$RD" config --get extensions.partialclone)" ]; then
-        history=0
-        log "$RN: the copy gets no history: shallow or partial clone"
-    fi
+    if no_history; then history=0; fi
     if [ -f "$STATE/$ID.tips" ]; then
         while read -r t; do tips+=("^$t"); done < "$STATE/$ID.tips"
     fi
@@ -481,11 +514,36 @@ start_repo() {
     rm -f "$STATE/$ID.bundled"
     result="$( { if [ "$history" = 1 ] && [ -n "$(git -C "$RD" rev-list -n 1 --branches --tags ${tips[@]+"${tips[@]}"})" ]; then
                      git -C "$RD" bundle create - --branches --tags ${tips[@]+"${tips[@]}"} && touch "$STATE/$ID.bundled"
-                 fi; } | sv_side "$ID" repo "$CD" "$head" "$origin")" || return 1
+                 fi; } | sv_side "$ID" repo "$CD" "$head" "$hc" "$origin")" || return 1
     if [ "$history" = 1 ] && { [ "$result" = fetched ] || { [ "$result" = none ] && [ ! -f "$STATE/$ID.bundled" ]; }; }; then
         git -C "$RD" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$STATE/$ID.tips"
     elif [ "$history" = 1 ]; then
         log "$RN: the copy's history wasn't updated ($result)"
+    fi
+    echo "$head $hc" > "$STATE/$ID.uhead"
+}
+
+# Prepare one repository. The first time, the copy becomes your folder.
+start_repo() {
+    local common gitdir t U C B UP CP
+    use "$1"
+    if plain; then
+        # The top folder of a folder of repositories: files only, no repository.
+        gitdir=""
+        [ -d "$US" ] || git init -q --bare "$US"
+    else
+        common="$(git -C "$RD" rev-parse --path-format=absolute --git-common-dir)" || return 1
+        gitdir="$(git -C "$RD" rev-parse --path-format=absolute --git-dir)" || return 1
+        if [ "$(git -C "$RD" rev-parse --show-object-format)" != sha1 ]; then
+            echo "sv-claude supports SHA-1 repositories only: $RD" >&2
+            return 1
+        fi
+        [ -d "$US" ] || git init -q --bare "$US"
+        echo "$common/objects" > "$US/objects/info/alternates"
+        if [ -f "$common/info/exclude" ]; then cp "$common/info/exclude" "$US/info/exclude"; fi
+
+        if no_history; then log "$RN: the copy gets no history: shallow or partial clone"; fi
+        send_history || return 1
     fi
 
     touch "$STATE/$ID.recent"
@@ -498,10 +556,10 @@ start_repo() {
         return 0
     fi
     rm -f "$UI"
-    if [ -f "$gitdir/index" ]; then cp "$gitdir/index" "$UI"; fi
+    if [ -n "$gitdir" ] && [ -f "$gitdir/index" ]; then cp "$gitdir/index" "$UI"; fi
     t="$(u_tree)" || return 1
     U="$(commit "$t")" || return 1
-    C="$(sv_side "$ID" tree "$CD" < /dev/null | sed -n 1p)" || return 1
+    C="$(copy_tree | sed -n 1p)" || return 1
     case "$C" in *[!0-9a-f]*|'') return 1 ;; esac
     sv_side "$ID" send "$C" < /dev/null | gu unpack-objects -q --strict || return 1
     { echo "$U"; echo "^$C"; } | gu pack-objects --revs --stdout -q | sv_side "$ID" take > /dev/null || return 1

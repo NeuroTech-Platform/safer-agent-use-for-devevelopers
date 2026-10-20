@@ -89,15 +89,16 @@ These steps are written for SandVault 1.32.0.
 SandVault's account has its own home folder, so your `~/.claude` folder doesn't reach it. At each start, SandVault copies `/Users/Shared/sv-$USER/user/` into that home folder. In your daily account, from this repository's folder:
 
 ```bash
-mkdir -p "/Users/Shared/sv-$USER/user/.claude/rules"
+mkdir -p "/Users/Shared/sv-$USER/user/.claude/rules" ~/.claude/rules
 grep -v '^[[:space:]]*//' settings.jsonc > "/Users/Shared/sv-$USER/user/.claude/settings.json"
-cp rules/sandbox.md "/Users/Shared/sv-$USER/user/.claude/rules/"
+cp rules/*.md "/Users/Shared/sv-$USER/user/.claude/rules/"
+cp rules/commands.md ~/.claude/rules/
 ```
 
-Repeat this after every change to `settings.jsonc` or `rules/sandbox.md`.
+SandVault gets the settings and all three rules files, `sandvault.md` among them, which covers git in the synced copy. Your own account gets `commands.md`, whose rules hold without the sandbox. Repeat this after every change to `settings.jsonc` or a file in `rules/`.
 
 > [!NOTE]
-> Claude Code in VS Code, in the Claude Desktop app, or started with `claude` in a terminal, runs as you, outside SandVault. Install the settings in your own account too: [README](../README.md#install), step 2.
+> Claude Code in VS Code, in the Claude Desktop app, or started with `claude` in a terminal, runs as you, outside SandVault, with no sandbox unless you install the settings in your own account too: [README](../README.md#install), step 2. That step also installs `sandbox.md` there, which only makes sense under the sandbox, and not `sandvault.md`.
 
 ## 3. Log in
 
@@ -153,15 +154,16 @@ It refuses your home folder. Options go to Claude, for example `sv-claude --cont
 While a session runs, `sv-claude` syncs your folder and its copy in `/Users/Shared/sv-$USER/work/`, both ways, every 3 seconds. Your account never reads or writes the copy. Everything in the copy runs as SandVault's account, through `sudo`.
 
 - Synced: files git sees, tracked or untracked. Not synced: files `.gitignore` excludes, such as `node_modules` and build output. Install dependencies in SandVault with `sv-claude shell npm install`.
-- In a folder of repositories, only the repositories are synced.
+- In a folder of repositories, the repositories and the files beside them are synced. A repository Claude creates there stays in the copy.
 - Never synced: `.env` and `.env.*`, except `.env.example`.
 - From your folder to the copy only: files that tools run code from on their own, such as `.vscode`, `.envrc`, `.claude` and package-manager settings. [`bin/sv-claude`](../bin/sv-claude) lists them.
 - In the copy only: links that point out of the repository, and submodules.
 - Same lines changed on both sides between two syncs: your version is kept on both sides. You get a notification. `~/Library/Caches/sv-claude/<folder>/sync.log` gives the command that shows Claude's version.
 - More than 20 deletions, or 300 changed files, from Claude within 60 seconds: not applied to your folder. You get a notification. `sv-claude sync` shows the changes and asks.
-- A checkout, reset, rebase, merge or pull by Claude in the copy: the changed files are not applied to your folder. You get a notification naming the copy's branch. `sv-claude sync` shows the changes, and the `git switch` line that puts your folder on the same branch first.
+- Your folder and the copy are one working tree, on one branch: yours. A switch, commit or pull in your folder is one in the copy within seconds, and Claude's uncommitted edits stay, as they would in your folder. For your own work on another branch during a session, use a second clone outside the synced folder. For Claude's work on other branches, `rules/sandvault.md` tells it to add worktrees, which stay in the copy; it commits there itself and pushes with your approval.
+- A checkout, reset, rebase, merge or pull by Claude in the copy, during a session or between two: the changed files are not applied to your folder. You get a notification naming the copy's branch. `sv-claude sync` shows the changes, and the `git switch` line that puts your folder on the same branch first. After that switch, the hold ends by itself.
 - Claude's changes are in your folder within seconds. Dev servers, test watchers and VS Code extensions can run them at once. Review them in Source Control before you commit.
-- The copy's repository gets your branches, tags and `origin` URL, without credentials. Your git config and hooks are not copied. Claude's commits stay in the copy.
+- The copy's repository gets your branches, tags and `origin` URL, without credentials. Your git config and hooks are not copied. A commit by Claude in the copy doesn't reach your folder; its files do, as edits. When your branch moves, the copy's branch follows yours and Claude's commit is set aside, its files kept.
 - The sync runs `sudo -n -H -u sandvault-$USER /usr/bin/env …`. SandVault's `/etc/sudoers.d/50-nopasswd-for-sandvault-$USER` allows your account to run `/usr/bin/env`, with any arguments, as `sandvault-$USER`, without a password. It allows nothing as root or as another account. `-n` fails instead of asking for a password. `-H` sets the home folder to `sandvault-$USER`'s. These commands get `/dev/null` as stdin and stderr, so they can't reach your terminal or your files. Each call is in the system log.
 
 To hold all of Claude's changes, start with `SV_CLAUDE_REVIEW=1 sv-claude`. Your edits still reach the copy. To apply Claude's changes, run in a second terminal, in the same folder:
