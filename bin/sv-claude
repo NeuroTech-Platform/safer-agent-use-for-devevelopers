@@ -208,7 +208,7 @@ case "$CMD" in
         cat > "$D/$ID.bundle"
         result=none
         if [ -s "$D/$ID.bundle" ]; then
-            if git fetch -q --update-head-ok "$D/$ID.bundle" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' > /dev/null; then
+            if git fetch -q --update-head-ok "$D/$ID.bundle" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' '+refs/remotes/*:refs/remotes/*' > /dev/null; then
                 result=fetched
             else
                 result=failed
@@ -233,6 +233,15 @@ case "$CMD" in
         fi
         git rev-parse -q --verify HEAD > "$D/$ID.head" || : > "$D/$ID.head"
         echo "$result" ;;
+    refs)  # refs DIR: your refs, "object name" lines on stdin, for the objects the copy has.
+           # A bundle can't carry a ref to a known object, so refs travel on their own.
+        cd "$1"
+        grep -E '^[0-9a-f]{40} refs/(heads|tags|remotes)/' | sort -u > "$D/$ID.refs" || true
+        cut -d' ' -f1 "$D/$ID.refs" | git cat-file --batch-check='%(objectname) %(objecttype)' \
+            | awk '$2 != "missing" { print $1 }' | sort -u > "$D/$ID.have"
+        awk 'NR == FNR { have[$1] = 1; next } ($1 in have) { print "update " $2 " " $1 }' "$D/$ID.have" "$D/$ID.refs" \
+            | git update-ref --stdin > /dev/null
+        rm -f "$D/$ID.refs" "$D/$ID.have" ;;
     errors) # errors: the last errors of this side, then forget them
         tail -n 5 "$D/$ID.err" 2> /dev/null || true
         : > "$D/$ID.err" ;;
@@ -355,12 +364,16 @@ cycle() {
     local how="$2" B UP CP Ut U C Cs M1 Mp MU MUc="" MCt MCc nd nc rd rn now p rc out branch uh ok_u=0 ok_c=0 allow=1
     use "$1"
     read -r B UP CP < "$ST" || return 1
-    # The copy's repository follows your HEAD: a branch switch, a commit or a
-    # pull in your folder is one in the copy too, before its files arrive.
+    # The copy's repository follows yours: a branch switch, a commit, a fetch
+    # or a pull in your folder is one in the copy too, before its files arrive.
     if ! plain; then
-        uh="$(git -C "$RD" symbolic-ref -q HEAD || git -C "$RD" rev-parse -q --verify HEAD || true) $(git -C "$RD" rev-parse -q --verify HEAD || true)"
+        uh="$(user_sig)"
         if [ "$uh" != "$(cat "$STATE/$ID.uhead" 2> /dev/null || true)" ]; then
-            if send_history; then log "$RN: the copy follows your HEAD: ${uh%% *} $(printf '%s' "${uh##* }" | cut -c1-7)"; else log "$RN: the copy couldn't follow your HEAD"; fi
+            if send_history; then
+                log "$RN: the copy follows your repository: $(git -C "$RD" symbolic-ref -q --short HEAD || echo 'a detached HEAD') $(git -C "$RD" rev-parse -q --short HEAD || true)"
+            else
+                log "$RN: the copy couldn't follow your repository"
+            fi
         fi
     fi
     # A lost index starts again from the last sync, so .gitignore can't hide files.
@@ -497,12 +510,19 @@ cycle() {
 no_history() {  # a shallow or partial clone can't make a complete bundle
     [ "$(git -C "$RD" rev-parse --is-shallow-repository)" = true ] || [ -n "$(git -C "$RD" config --get extensions.partialclone)" ]
 }
-# The copy's own repository follows yours: your branches and tags as a bundle,
-# your HEAD, and your origin URL without credentials. Your git settings and
-# hooks stay here. A failed transfer is logged and doesn't stop the sync.
+user_sig() {  # your HEAD and all your refs, in one line: a change means the copy must follow
+    printf '%s %s %s\n' "$(git -C "$RD" symbolic-ref -q HEAD || git -C "$RD" rev-parse -q --verify HEAD || true)" \
+        "$(git -C "$RD" rev-parse -q --verify HEAD || true)" \
+        "$(git -C "$RD" for-each-ref --format='%(objectname)%(refname)' refs/heads refs/tags refs/remotes | shasum | cut -c1-16)"
+}
+# The copy's own repository follows yours: your branches, tags and
+# remote-tracking branches as a bundle, your HEAD, and your origin URL without
+# credentials. Your git settings and hooks stay here. A failed transfer is
+# logged and doesn't stop the sync.
 send_history() {
-    local head hc origin history=1 result t
+    local head hc origin history=1 result t sig
     local tips=()
+    sig="$(user_sig)"
     head="$(git -C "$RD" symbolic-ref -q HEAD || git -C "$RD" rev-parse -q --verify HEAD || true)"
     hc="$(git -C "$RD" rev-parse -q --verify HEAD || true)"
     origin="$(git -C "$RD" remote get-url origin 2> /dev/null | sed -E 's#^([A-Za-z0-9+.-]+://)[^/@]*@#\1#' || true)"
@@ -510,17 +530,19 @@ send_history() {
     if [ -f "$STATE/$ID.tips" ]; then
         while read -r t; do tips+=("^$t"); done < "$STATE/$ID.tips"
     fi
-    if ! git -C "$RD" rev-list -n 1 --branches --tags ${tips[@]+"${tips[@]}"} > /dev/null 2>&1; then tips=(); fi
+    if ! git -C "$RD" rev-list -n 1 --branches --tags --remotes ${tips[@]+"${tips[@]}"} > /dev/null 2>&1; then tips=(); fi
     rm -f "$STATE/$ID.bundled"
-    result="$( { if [ "$history" = 1 ] && [ -n "$(git -C "$RD" rev-list -n 1 --branches --tags ${tips[@]+"${tips[@]}"})" ]; then
-                     git -C "$RD" bundle create - --branches --tags ${tips[@]+"${tips[@]}"} && touch "$STATE/$ID.bundled"
+    result="$( { if [ "$history" = 1 ] && [ -n "$(git -C "$RD" rev-list -n 1 --branches --tags --remotes ${tips[@]+"${tips[@]}"})" ]; then
+                     git -C "$RD" bundle create - --branches --tags --remotes ${tips[@]+"${tips[@]}"} && touch "$STATE/$ID.bundled"
                  fi; } | sv_side "$ID" repo "$CD" "$head" "$hc" "$origin")" || return 1
     if [ "$history" = 1 ] && { [ "$result" = fetched ] || { [ "$result" = none ] && [ ! -f "$STATE/$ID.bundled" ]; }; }; then
-        git -C "$RD" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$STATE/$ID.tips"
+        git -C "$RD" for-each-ref --format='%(objectname)' refs/heads refs/tags refs/remotes > "$STATE/$ID.tips"
     elif [ "$history" = 1 ]; then
         log "$RN: the copy's history wasn't updated ($result)"
     fi
-    echo "$head $hc" > "$STATE/$ID.uhead"
+    git -C "$RD" for-each-ref --format='%(objectname) %(refname)' refs/heads refs/tags refs/remotes \
+        | sv_side "$ID" refs "$CD" > /dev/null || log "$RN: the copy's refs weren't updated"
+    echo "$sig" > "$STATE/$ID.uhead"
 }
 
 # Prepare one repository. The first time, the copy becomes your folder.

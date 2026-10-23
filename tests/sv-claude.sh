@@ -265,6 +265,9 @@ check "your commit is the copy's HEAD, clean" "[ \"\$(git -C '$C' rev-parse HEAD
 git -C "$P" switch -q -c topic
 wait_for "[ \"\$(git -C '$C' symbolic-ref -q --short HEAD)\" = topic ]"
 check "a new branch without commits exists in the copy" "[ \"\$(git -C '$C' rev-parse -q --verify topic)\" = \"\$(git -C '$P' rev-parse topic)\" ]"
+git -C "$P" update-ref refs/remotes/origin/feat "$(git -C "$P" rev-parse feat)"   # what a fetch does
+wait_for "git -C '$C' rev-parse -q --verify refs/remotes/origin/feat > /dev/null"
+check "your fetch reached the copy"      "[ \"\$(git -C '$C' rev-parse -q --verify refs/remotes/origin/feat)\" = \"\$(git -C '$P' rev-parse feat)\" ]"
 check "no hold from your moves"          "! grep -q 'git state of follow' '$NOTES'"
 go 2; wait
 
