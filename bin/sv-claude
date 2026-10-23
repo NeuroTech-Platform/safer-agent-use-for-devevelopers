@@ -26,28 +26,68 @@ case "$(cd "$HOME" && pwd -P)/" in
     "$SRC"/*) echo "Don't run this from your home folder. Run it from a repository, or a folder of repositories." >&2; exit 1 ;;
 esac
 
-# The repositories to sync: this folder, or each subfolder that is one. In a
-# folder of repositories, the folder's own files are synced too, as a plain
-# folder: "." without a repository behind it.
+# The entries to sync, each a working tree of its own: this folder, or each
+# subfolder that is one, plus every worktree of those repositories, wherever
+# it is. REPOS holds each entry's name, which is its path in the copy; RDIRS
+# its path on your side. A worktree outside this folder is ".worktrees/<its
+# folder name>" in the copy. In a folder of repositories, the folder's own
+# files are synced too, as a plain folder: "." without a repository behind it.
 REPOS=()
-TOPX=()
+RDIRS=()
 TOPDIR=0
+candidates() {  # "name<TAB>path" lines: the repositories and worktrees to sync, besides "."
+    local d p base
+    local -a bases=()
+    if [ "$TOPDIR" = 1 ]; then
+        for d in "$SRC"/*/; do
+            if [ -e "$d.git" ]; then printf '%s\t%s\n' "$(basename "$d")" "${d%/}"; bases+=("${d%/}"); fi
+        done
+    else
+        bases=("$SRC")
+    fi
+    for base in ${bases[@]+"${bases[@]}"}; do
+        git -C "$base" worktree list --porcelain 2> /dev/null | sed -n 's/^worktree //p' | while IFS= read -r p; do
+            p="$(cd "$p" 2> /dev/null && pwd -P)" || continue
+            [ "$p" != "$base" ] || continue
+            case "$HOME/" in "$p"/*) continue ;; esac   # never your home folder, or one above it
+            case "$p/" in
+                "$SRC"/?*) printf '%s\t%s\n' "${p#"$SRC/"}" "$p" ;;
+                *) printf '%s\t%s\n' ".worktrees/$(basename "$p")" "$p" ;;
+            esac
+        done
+    done
+}
+add_entry() {  # add_entry NAME PATH: one more entry, unless the name is taken
+    local r
+    for r in ${REPOS[@]+"${REPOS[@]}"}; do [ "$r" != "$1" ] || return 1; done
+    REPOS+=("$1"); RDIRS+=("$2")
+}
 if [ -e "$SRC/.git" ]; then
-    REPOS=(.)
+    add_entry . "$SRC"
     WHAT="this repository"
 else
-    for d in "$SRC"/*/; do
-        if [ -e "$d.git" ]; then REPOS+=("$(basename "$d")"); TOPX+=(":(literal)$(basename "$d")"); fi
-    done
-    WHAT="${#REPOS[@]} repositories"
     TOPDIR=1
 fi
-if [ ${#REPOS[@]} -eq 0 ]; then
-    echo "Run this from a repository's top folder, or a folder whose subfolders are repositories." >&2
-    exit 1
+while IFS=$'\t' read -r n p; do [ -n "$n" ] && { add_entry "$n" "$p" || true; }; done < <(candidates)
+if [ "$TOPDIR" = 1 ]; then
+    if [ ${#REPOS[@]} -eq 0 ]; then
+        echo "Run this from a repository's top folder, or a folder whose subfolders are repositories." >&2
+        exit 1
+    fi
+    WHAT="${#REPOS[@]} repositories"
+    add_entry . "$SRC"
 fi
-if [ "$TOPDIR" = 1 ]; then REPOS+=(.); fi
 plain() { [ "$R" = . ] && [ "$TOPDIR" = 1 ]; }  # the current entry is the plain top folder
+excl_for() {  # pathspecs for the other entries that sit inside this one, on either side
+    local i n d
+    for i in "${!REPOS[@]}"; do
+        n="${REPOS[$i]}"; d="${RDIRS[$i]}"
+        [ "$n" != "$R" ] || continue
+        case "$d/" in "$RD"/?*) printf ':(literal)%s\n' "${d#"$RD/"}" ;; esac
+        if [ "$R" = . ]; then printf ':(literal)%s\n' "$n"
+        else case "$n/" in "$R"/?*) printf ':(literal)%s\n' "${n#"$R/"}" ;; esac; fi
+    done
+}
 [ -d "$SHARED" ] || { echo "SandVault isn't set up for $USER. See docs/macos.md." >&2; exit 1; }
 
 # Your account never reads or writes the copy, because a link planted there could
@@ -197,6 +237,9 @@ case "$CMD" in
             git init -q
             touch "$D/$ID.made"
         fi
+        # Worktrees from outside the user's folder are synced into .worktrees/ here.
+        mkdir -p .git/info
+        grep -qsx '.worktrees/' .git/info/exclude || echo '.worktrees/' >> .git/info/exclude
         # A HEAD move by Claude since the last report, for instance while no
         # session ran, is kept for the next sync's check.
         old="$(git rev-parse -q --verify HEAD || true)"
@@ -255,7 +298,10 @@ sv_side() { ( cd / && "${AS_SV[@]}" /bin/bash -c "$SVSIDE" sv-side "$NAME" "$@" 
 
 use() {  # use REPO: the paths for one repository
     R="$1"
-    if [ "$R" = . ]; then RD="$SRC"; CD="$COPY"; else RD="$SRC/$R"; CD="$COPY/$R"; fi
+    local i
+    RD="$SRC/$R"
+    for i in "${!REPOS[@]}"; do if [ "${REPOS[$i]}" = "$R" ]; then RD="${RDIRS[$i]}"; fi; done
+    if [ "$R" = . ]; then RD="$SRC"; CD="$COPY"; else CD="$COPY/$R"; fi
     RN="$(basename "$RD")"
     ID="$(printf '%s' "$R" | shasum | cut -c1-8)"
     US="$STATE/$ID.git"
@@ -270,15 +316,19 @@ notify() {  # a macOS notification; the text is passed as data, never as script
 }
 
 u_tree() {  # your folder as git sees it, without .env files, as a tree
+    local p
     local -a out=()
-    if plain; then out=("${TOPX[@]}"); fi
+    while IFS= read -r p; do out+=("$p"); done < <(excl_for)
     ( cd "$RD" || exit 1
       GIT_INDEX_FILE="$UI" gu --work-tree=. add -A --ignore-errors > /dev/null 2>&1 || true
       GIT_INDEX_FILE="$UI" gu --work-tree=. rm --cached -r -q -f --ignore-unmatch -- "${NOSECRETS[@]}" ${out[@]+"${out[@]}"} || exit 1
       GIT_INDEX_FILE="$UI" gu write-tree ) || { rm -f "$UI"; return 1; }
 }
 copy_tree() {  # the copy as git sees it, as a commit, then same or moved
-    if plain; then sv_side "$ID" tree "$CD" "${TOPX[@]}" < /dev/null; else sv_side "$ID" tree "$CD" < /dev/null; fi
+    local p
+    local -a out=()
+    while IFS= read -r p; do out+=("$p"); done < <(excl_for)
+    sv_side "$ID" tree "$CD" ${out[@]+"${out[@]}"} < /dev/null
 }
 commit() {  # commit TREE [OLD]: OLD if it holds TREE, else a new commit
     if [ -n "${2:-}" ] && [ "$(gu rev-parse "$2^{tree}")" = "$1" ]; then echo "$2"; else gu commit-tree "$1" -m sync < /dev/null; fi
@@ -545,6 +595,22 @@ send_history() {
     echo "$sig" > "$STATE/$ID.uhead"
 }
 
+exclude_nested() {  # a worktree inside one of your repositories: keep it out of that repository's git status
+    local i d pc rel
+    for i in "${!REPOS[@]}"; do
+        d="${RDIRS[$i]}"
+        [ "${REPOS[$i]}" != "$R" ] && [ -e "$d/.git" ] || continue
+        case "$RD/" in "$d"/?*) ;; *) continue ;; esac
+        pc="$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2> /dev/null)" || continue
+        rel="${RD#"$d/"}/"
+        mkdir -p "$pc/info"
+        if ! grep -qsx -F "$rel" "$pc/info/exclude"; then
+            echo "$rel" >> "$pc/info/exclude"
+            log "$RN: added $rel to $(basename "$d")'s .git/info/exclude, so its git status leaves the worktree out"
+        fi
+    done
+}
+
 # Prepare one repository. The first time, the copy becomes your folder.
 start_repo() {
     local common gitdir t U C B UP CP
@@ -566,6 +632,7 @@ start_repo() {
 
         if no_history; then log "$RN: the copy gets no history: shallow or partial clone"; fi
         send_history || return 1
+        exclude_nested
     fi
 
     touch "$STATE/$ID.recent"
@@ -612,12 +679,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A repository or worktree you add during the session is synced from the next
+# cycle; one you remove stops. Its copy stays.
+refresh_repos() {
+    local n p i
+    local -a keep=() keepd=()
+    while IFS=$'\t' read -r n p; do
+        [ -n "$n" ] || continue
+        add_entry "$n" "$p" || continue
+        if start_repo "$n" 2> "$STATE/start.err"; then
+            log "$n: added; synced from now on"
+        else
+            log "$n: added, but couldn't prepare it: $(tail -n 1 "$STATE/start.err")"
+            unset 'REPOS[${#REPOS[@]}-1]' 'RDIRS[${#RDIRS[@]}-1]'
+        fi
+    done < <(candidates)
+    for i in "${!REPOS[@]}"; do
+        if [ "${REPOS[$i]}" = . ] || [ -e "${RDIRS[$i]}/.git" ]; then keep+=("${REPOS[$i]}"); keepd+=("${RDIRS[$i]}")
+        else log "${REPOS[$i]}: removed; no longer synced. Its copy stays."; fi
+    done
+    REPOS=("${keep[@]}"); RDIRS=("${keepd[@]}")
+}
+
 sync_loop() {
     while [ ! -f "$STATE/stop" ]; do
         sleep "$INTERVAL"
         [ ! -f "$STATE/stop" ] || break
         if mkdir "$STATE/cycle" 2> /dev/null; then
             echo $$ > "$STATE/cycle/pid"
+            refresh_repos
             for r in "${REPOS[@]}"; do cycle "$r" auto || true; done
             rm -rf "$STATE/cycle"
         fi
@@ -668,6 +758,7 @@ touch "$STATE/stop"
 wait "$LOOP" 2> /dev/null || true
 LOOP=""
 lock "$STATE/cycle" "A sync is still running. Run sv-claude sync when it ends." 60
+refresh_repos
 for r in "${REPOS[@]}"; do
     use "$r"
     if [ "$REVIEW" = 1 ] || [ -f "$STATE/$ID.held" ]; then

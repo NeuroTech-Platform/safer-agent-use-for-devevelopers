@@ -55,7 +55,8 @@ at() { wait_for "[ -f '$FLAGS/at-$1' ]"; }
 go() { touch "$FLAGS/go-$1"; }
 hold() { wait_for "mkdir '$1/cycle' 2> /dev/null" && echo $$ > "$1/cycle/pid"; }
 release() { rm -rf "$1/cycle"; }
-check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fi; }
+NPASS=0; NFAIL=0
+check() { if eval "$2"; then echo "PASS  $1"; NPASS=$((NPASS + 1)); else echo "FAIL  $1"; NFAIL=$((NFAIL + 1)); fi; }
 show() { sed 's/^/      | /'; }
 mkrepo() {  # mkrepo DIR: a repository with committed files, an ignored file and a hook
     mkdir -p "$1/src" "$1/.vscode" "$1/many"
@@ -174,7 +175,7 @@ go 2; wait
 echo "### D. Folder of repositories"
 P="$T/ws"; mkdir -p "$P"; mkrepo "$P/repoA"; mkrepo "$P/repoB"; echo top > "$P/top.txt"; FLAGS="$T/flags-D"; mkdir -p "$FLAGS"
 C="$(copy_of "$P")"
-printf 'step 1\necho claude >> repoA/a.txt\necho claude >> repoB/a.txt\nmkdir -p .ai; echo draft > .ai/draft.md\nmkdir new-repo; git -C new-repo init -q; echo x > new-repo/x.txt\nstep 2\n' > "$T/scenario-D"
+printf 'step 1\necho claude >> repoA/a.txt\necho claude >> repoB/a.txt\nmkdir -p .ai; echo draft > .ai/draft.md\nmkdir new-repo; git -C new-repo init -q; echo x > new-repo/x.txt\nstep 2\necho wt >> repoA-feat/a.txt\nstep 3\n' > "$T/scenario-D"
 run_bg "$P" "$T/scenario-D" "$T/D.out"; at 1
 check "top-level file in the copy"       "grep -qx top '$C/top.txt'"
 go 1
@@ -185,7 +186,17 @@ check "a repository Claude adds stays in the copy" "[ ! -e '$P/new-repo' ]"
 echo you > "$P/notes.md"
 wait_for "grep -qsx you '$C/notes.md'";  check "your top-level file reached Claude" "grep -qsx you '$C/notes.md'"
 check "your git index untouched, both repositories" "[ -z \"\$(git -C '$P/repoA' diff --cached --name-only)\" ] && [ -z \"\$(git -C '$P/repoB' diff --cached --name-only)\" ]"
-go 2; wait
+echo "  a worktree added beside the repositories"
+git -C "$P/repoA" worktree add -q "$P/repoA-feat" -b feat
+wait_for "[ \"\$(git -C '$C/repoA-feat' symbolic-ref -q --short HEAD 2> /dev/null)\" = feat ] && [ -f '$C/repoA-feat/a.txt' ]"
+check "worktree synced, copy on its branch" "[ \"\$(git -C '$C/repoA-feat' symbolic-ref -q --short HEAD)\" = feat ] && grep -qx claude '$C/repoA-feat/a.txt' || grep -qx 1 '$C/repoA-feat/a.txt'"
+go 2; at 3
+wait_for "grep -qsx wt '$P/repoA-feat/a.txt'"
+check "Claude's edit in the worktree reached you" "grep -qsx wt '$P/repoA-feat/a.txt' && ! grep -qx wt '$P/repoA/a.txt'"
+git -C "$P/repoA" worktree remove --force "$P/repoA-feat"
+wait_for "grep -q 'repoA-feat: removed' '$(state_of "$P")/sync.log'"
+check "removed worktree stops syncing, its copy stays" "grep -q 'repoA-feat: removed' '$(state_of "$P")/sync.log' && [ -f '$C/repoA-feat/a.txt' ]"
+go 3; wait
 
 echo "### E. Repository without commits, and a crashed run's lock"
 P="$T/fresh"; mkdir -p "$P"; git -C "$P" init -q; seq 1 3 > "$P/a.txt"; FLAGS="$T/flags-E"; mkdir -p "$FLAGS"
@@ -289,7 +300,29 @@ wait_for "grep -q 'the hold ends' '$S/sync.log'"
 check "after your switch, the hold ends" "grep -q 'the hold ends' '$S/sync.log' && [ \"\$(git -C '$C' symbolic-ref -q --short HEAD)\" = feat ] && git -C '$C' diff --quiet HEAD"
 go 1; wait
 
+echo "### N. A worktree inside a single repository"
+P="$T/nested"; mkrepo "$P"; S="$(state_of "$P")"; C="$(copy_of "$P")"
+FLAGS="$T/flags-N"; mkdir -p "$FLAGS"
+printf 'step 1\necho wt >> .worktrees/feat/a.txt\necho out >> .worktrees/nested-out/a.txt\nstep 2\n' > "$T/scenario-N"
+run_bg "$P" "$T/scenario-N" "$T/N.out"; at 1
+git -C "$P" worktree add -q "$P/.worktrees/feat" -b feat
+git -C "$P" worktree add -q "$T/nested-out" -b out
+wait_for "[ \"\$(git -C '$C/.worktrees/feat' symbolic-ref -q --short HEAD 2> /dev/null)\" = feat ] && [ -f '$C/.worktrees/feat/a.txt' ] && [ \"\$(git -C '$C/.worktrees/nested-out' symbolic-ref -q --short HEAD 2> /dev/null)\" = out ]"
+check "nested worktree synced, copy on its branch" "[ \"\$(git -C '$C/.worktrees/feat' symbolic-ref -q --short HEAD)\" = feat ]"
+check "outside worktree synced into the copy's .worktrees" "[ \"\$(git -C '$C/.worktrees/nested-out' symbolic-ref -q --short HEAD)\" = out ] && [ -f '$C/.worktrees/nested-out/a.txt' ]"
+check "your git status leaves the nested worktree out" "grep -qx '.worktrees/feat/' '$P/.git/info/exclude' && ! git -C '$P' status --porcelain | grep -q worktrees"
+check "the copy's git status leaves .worktrees out" "! git -C '$C' status --porcelain | grep -q worktrees"
+go 1; at 2
+wait_for "grep -qsx wt '$P/.worktrees/feat/a.txt' && grep -qsx out '$T/nested-out/a.txt'"
+check "Claude's edits in both worktrees reached you" "grep -qsx wt '$P/.worktrees/feat/a.txt' && grep -qsx out '$T/nested-out/a.txt' && ! grep -q -e wt -e out '$P/a.txt'"
+go 2; wait
+
 echo "### F. Your account never touches the copy"
+echo "  Lines that name the copy's path. Allowed: the line that builds it, and arguments to sv_side or sv."
 grep -n -E '"\$(COPY|CD)|\$COPY/|\$CD/' "${SV_CLAUDE_SCRIPT:-$HERE/../bin/sv-claude}" | show
+check "the copy's path goes only to SandVault's side" \
+    "! grep -E '\"\\\$(COPY|CD)|\\\$COPY/|\\\$CD/' '${SV_CLAUDE_SCRIPT:-$HERE/../bin/sv-claude}' | grep -v -E 'CD=\"\\\$COPY\"|sv_side \"\\\$ID\" [a-z]+ \"\\\$CD\"|sv -x \"\\\$MODE\" \"\\\$COPY\"' | grep -q ."
 
 if [ "${KEEP:-0}" = 1 ]; then echo "Test files kept: $T"; else rm -rf "$T"; fi
+echo "$NPASS passed, $NFAIL failed"
+[ "$NFAIL" -eq 0 ]
