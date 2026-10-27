@@ -659,10 +659,11 @@ start_repo() {
 # A lock is a folder with its owner's process ID. A crashed run's lock is taken over.
 LOCKS=()
 LOOP=""
+stale() { ! kill -0 "$(cat "$1/pid" 2> /dev/null)" 2> /dev/null; }  # stale DIR: the lock's owner is gone
 lock() {  # lock DIR MESSAGE [WAIT]
     local tries="${3:-1}"
     while ! mkdir "$1" 2> /dev/null; do
-        if ! kill -0 "$(cat "$1/pid" 2> /dev/null)" 2> /dev/null; then
+        if stale "$1"; then
             rm -rf "$1"
             continue
         fi
@@ -701,16 +702,27 @@ refresh_repos() {
     REPOS=("${keep[@]}"); RDIRS=("${keepd[@]}")
 }
 
+# The cycle lock is held by "sv-claude sync" while you review, and by the loop
+# during a cycle. A lock left by a crashed run would stop every sync, so the
+# loop takes it over, and drops its own lock when it ends, however it ends.
+CYCLING=0
 sync_loop() {
+    trap '[ "$CYCLING" = 0 ] || rm -rf "$STATE/cycle"' EXIT
     while [ ! -f "$STATE/stop" ]; do
         sleep "$INTERVAL"
         [ ! -f "$STATE/stop" ] || break
-        if mkdir "$STATE/cycle" 2> /dev/null; then
-            echo $$ > "$STATE/cycle/pid"
-            refresh_repos
-            for r in "${REPOS[@]}"; do cycle "$r" auto || true; done
+        if ! mkdir "$STATE/cycle" 2> /dev/null; then
+            stale "$STATE/cycle" || continue
             rm -rf "$STATE/cycle"
+            mkdir "$STATE/cycle" 2> /dev/null || continue
+            log "a crashed run's sync lock was taken over"
         fi
+        CYCLING=1
+        echo $$ > "$STATE/cycle/pid"
+        refresh_repos || true
+        for r in "${REPOS[@]}"; do cycle "$r" auto || true; done
+        rm -rf "$STATE/cycle"
+        CYCLING=0
     done
 }
 

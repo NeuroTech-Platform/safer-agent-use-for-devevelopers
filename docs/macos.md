@@ -227,6 +227,7 @@ SandVault's sandbox also blocks external drives (`/Volumes`) and world-writable 
 | `gcloud` or `terraform` fail TLS verification | Add the tool to `sandbox.excludedCommands` in `settings.jsonc`, as the settings do for `gh`, and repeat step 2. |
 | `open` or `osascript` fail with error `-600` | The sandbox blocks Apple Events. Approve the retry outside the sandbox. |
 | A command in SandVault can't find `node_modules`, a virtual environment or another ignored folder | Ignored files aren't synced. Create them in SandVault, for example with `sv-claude shell npm install`. |
+| Claude's changes stop reaching your folder, without a notification | An `sv-claude sync` waiting for your answer in another terminal holds the sync. Answer it. Otherwise, `~/Library/Caches/sv-claude/<folder>/sync.log` says what happened. |
 | `sv-claude can't run commands as sandvault-…` | SandVault's sudo rule is missing. Run `sv --rebuild build`. On a daily account, the admin repeats [step b](#daily-account-without-admin-rights). |
 | `sv-claude needs a newer git` | Run `brew install git`, then open a new terminal. On a daily account without admin rights, the admin account runs it. |
 | `SandVault's account needs a newer git` | Update the Xcode Command Line Tools in System Settings, Software Update. On a daily account without admin rights, the admin account does it. |

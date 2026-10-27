@@ -198,12 +198,14 @@ wait_for "grep -q 'repoA-feat: removed' '$(state_of "$P")/sync.log'"
 check "removed worktree stops syncing, its copy stays" "grep -q 'repoA-feat: removed' '$(state_of "$P")/sync.log' && [ -f '$C/repoA-feat/a.txt' ]"
 go 3; wait
 
-echo "### E. Repository without commits, and a crashed run's lock"
+echo "### E. Repository without commits, and a crashed run's locks"
 P="$T/fresh"; mkdir -p "$P"; git -C "$P" init -q; seq 1 3 > "$P/a.txt"; FLAGS="$T/flags-E"; mkdir -p "$FLAGS"
-S="$(state_of "$P")"; mkdir -p "$S/session"; echo 999999 > "$S/session/pid"
-printf 'step 1\necho claude >> a.txt\n' > "$T/scenario-E"
-run_bg "$P" "$T/scenario-E" "$T/E.out"; at 1; go 1; wait
-check "synced, lock taken over"          "grep -qx claude '$P/a.txt'"
+S="$(state_of "$P")"; mkdir -p "$S/session" "$S/cycle"; echo 999999 > "$S/session/pid"; echo 999999 > "$S/cycle/pid"
+printf 'step 1\necho claude >> a.txt\nstep 2\n' > "$T/scenario-E"
+run_bg "$P" "$T/scenario-E" "$T/E.out"; at 1; go 1; at 2
+wait_for "grep -qx claude '$P/a.txt'"
+check "synced live, both locks taken over" "grep -qx claude '$P/a.txt' && grep -q 'sync lock was taken over' '$S/sync.log'"
+go 2; wait
 show < "$T/E.out"
 
 echo "### G. Deletions spread over several syncs still add up"
