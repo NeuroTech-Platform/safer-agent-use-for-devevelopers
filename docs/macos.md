@@ -155,7 +155,7 @@ While a session runs, `sv-claude` syncs your folder and its copy in `/Users/Shar
 
 - Synced: files git sees, tracked or untracked. Not synced: files `.gitignore` excludes, such as `node_modules` and build output. Install dependencies in SandVault with `sv-claude shell npm install`.
 - In a folder of repositories, the repositories and the files beside them are synced, including a repository or worktree you add during the session. A repository Claude creates there stays in the copy.
-- Never synced: `.env` and `.env.*`, except `.env.example`.
+- Never synced: `.env` and `.env.*`, except `.env.example`; and `.claude/tmp/`, Claude's temporary files, which stay in the copy, out of its git.
 - From your folder to the copy only: files that tools run code from on their own, such as `.vscode`, `.envrc`, `.claude` and package-manager settings. [`bin/sv-claude`](../bin/sv-claude) lists them.
 - In the copy only: links that point out of the repository, and submodules.
 - Same lines changed on both sides between two syncs: your version is kept on both sides. You get a notification. `~/Library/Caches/sv-claude/<folder>/sync.log` gives the command that shows Claude's version.

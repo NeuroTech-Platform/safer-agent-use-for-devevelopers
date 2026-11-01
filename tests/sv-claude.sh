@@ -84,6 +84,7 @@ rm e.txt; mv f.txt g.txt
 step 5
 mkdir -p .vscode; echo '{"claude":1}' > .vscode/settings.json
 ln -s /etc etc-link; ln -s ../../.. up-link; ln -s src/s.py ok-link; echo CLAUDE > .env; echo claude > debug.log
+mkdir -p .claude/tmp; echo scratch > .claude/tmp/scratch.txt
 step 6
 echo 'src/' >> .gitignore
 step 7
@@ -131,6 +132,7 @@ check "links out of the repo not copied"  "[ ! -L '$P/etc-link' ] && [ ! -L '$P/
 check "...and they stay in the copy"      "[ -L '$C/etc-link' ] && [ -L '$C/up-link' ]"
 check "link inside the repo copied"       "[ -L '$P/ok-link' ]"
 check "Claude's .env not copied"          "grep -qx SECRET '$P/.env'"
+check "Claude's .claude/tmp stays in the copy, out of its git" "[ ! -e '$P/.claude/tmp' ] && grep -qx scratch '$C/.claude/tmp/scratch.txt' && ! git -C '$C' status --porcelain | grep -q 'claude/tmp'"
 check "your ignored file untouched"       "grep -qx ignored '$P/debug.log'"
 go 6; at 7; sleep 1.5
 check ".gitignore edit deletes nothing"   "[ -f '$P/src/s.py' ]"

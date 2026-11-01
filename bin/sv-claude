@@ -131,8 +131,8 @@ AUTORUN=(
 )
 RUNS=()
 for n in "${AUTORUN[@]}"; do RUNS+=(":(glob)**/$n" ":(glob)**/$n/**"); done
-# Never synced: secrets.
-NOSECRETS=(':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example')
+# Never synced: secrets, and Claude's temporary files, which stay in the copy.
+NOSECRETS=(':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example' ':(glob)**/.claude/tmp/**')
 # Held for your review: more deletions, or more changed files, than this at once.
 MAX_DELETES=20
 MAX_CHANGES=300
@@ -177,13 +177,13 @@ case "$CMD" in
         shift
         GIT_INDEX_FILE="$I" g --work-tree=. add -A --ignore-errors > /dev/null 2>&1 || true
         GIT_INDEX_FILE="$I" g --work-tree=. rm --cached -r -q -f --ignore-unmatch -- \
-            ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example' "$@"
+            ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example' ':(glob)**/.claude/tmp/**' "$@"
         if ! t="$(GIT_INDEX_FILE="$I" g write-tree 2> /dev/null)"; then
             rm -f "$I"
             if [ -f "$D/$ID.last" ]; then GIT_INDEX_FILE="$I" g read-tree "$(cut -d' ' -f1 "$D/$ID.last")" 2> /dev/null || rm -f "$I"; fi
             GIT_INDEX_FILE="$I" g --work-tree=. add -A --ignore-errors > /dev/null 2>&1 || true
             GIT_INDEX_FILE="$I" g --work-tree=. rm --cached -r -q -f --ignore-unmatch -- \
-                ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example' "$@"
+                ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude,glob)**/.env.example' ':(glob)**/.claude/tmp/**' "$@"
             t="$(GIT_INDEX_FILE="$I" g write-tree)"
         fi
         if [ -f "$D/$ID.last" ] && [ "$(cut -d' ' -f1 "$D/$ID.last")" = "$t" ]; then
@@ -240,6 +240,8 @@ case "$CMD" in
         # Worktrees from outside the user's folder are synced into .worktrees/ here.
         mkdir -p .git/info
         grep -qsx '.worktrees/' .git/info/exclude || echo '.worktrees/' >> .git/info/exclude
+        # Claude's temporary files live in .claude/tmp/, out of git and out of the sync.
+        grep -qsx '.claude/tmp/' .git/info/exclude || echo '.claude/tmp/' >> .git/info/exclude
         # A HEAD move by Claude since the last report, for instance while no
         # session ran, is kept for the next sync's check.
         old="$(git rev-parse -q --verify HEAD || true)"
