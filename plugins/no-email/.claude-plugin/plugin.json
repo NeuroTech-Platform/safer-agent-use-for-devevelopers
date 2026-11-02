@@ -1,0 +1,7 @@
+{
+  "name": "no-email",
+  "version": "0.1.0",
+  "description": "Drops the userEmail block from the context Claude Code attaches to a conversation",
+  "author": { "name": "Alex (AlexErrant)", "url": "https://github.com/AlexErrant/claude-code-no-email" },
+  "license": "MIT"
+}

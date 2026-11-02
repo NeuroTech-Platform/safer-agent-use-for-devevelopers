@@ -1,0 +1,12 @@
+{
+  "name": "safer-claude-use",
+  "description": "Plugins from the safer-claude-use guide, for an administrator to install as the organization's own",
+  "owner": { "name": "NeuroTech-Platform" },
+  "plugins": [
+    {
+      "name": "no-email",
+      "source": "./plugins/no-email",
+      "description": "Drops the userEmail block from the context Claude Code attaches to a conversation"
+    }
+  ]
+}

@@ -21,6 +21,22 @@ Check: in Claude Code, run `/status`. `Setting sources` must include `Enterprise
 
 Your `~/.claude/settings.json` still applies. Lists from both files are merged. For single values, the managed file wins.
 
+## Run the no-email mod on managed computers
+
+Where managed settings exist, or the login is a Team or Enterprise account, Claude Code's built-in guard passes over the `no-email` mod from `~/.claude/skills/`. It runs only as the organization's own mod: this repository is a plugin marketplace (`.claude-plugin/marketplace.json`), so copy it to a folder only administrators can write, and add to the managed file:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "safer-claude-use": { "source": { "source": "directory", "path": "/opt/safer-claude-use" } }
+  },
+  "enabledPlugins": { "no-email@safer-claude-use": true },
+  "prependPlugins": ["no-email@safer-claude-use", "sec-default@builtin"]
+}
+```
+
+Keep `sec-default@builtin` in the list: it is the guard. Check in a session with `claude --debug`: the log's `hooks module no-email@safer-claude-use loaded` line says `tier prepend`.
+
 ## Stop repositories from loosening the sandbox
 
 With `"allowUnsandboxedCommands": true`, a repository can still add `excludedCommands` and turn on weaker sandbox options. To stop that, set it to `false` in the managed file. Claude then can never retry a command outside the sandbox: you run blocked commands yourself.

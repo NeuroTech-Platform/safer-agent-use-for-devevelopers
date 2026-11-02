@@ -16,6 +16,7 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`. The Claude
 - Sessions start in auto mode: a classifier approves routine actions and blocks risky ones. Bypass mode is off.
 - Verbose view shows every tool call in full.
 - Claude Code's telemetry is off: no usage metrics, error reports, surveys or feedback uploads. [docs/data.md](docs/data.md) lists what is still sent.
+- Your email address stays out of the context Claude Code sends with each conversation, where Claude otherwise finds it and can put it in requests.
 
 [settings.jsonc](settings.jsonc) explains each setting.
 
@@ -42,6 +43,7 @@ Requires Claude Code 2.1.285 or later. Check with `claude --version`. The Claude
    [ -f ~/.claude/settings.json ] && [ ! -f ~/.claude/settings.json.bak ] && cp ~/.claude/settings.json ~/.claude/settings.json.bak
    grep -v '^[[:space:]]*//' settings.jsonc > ~/.claude/settings.json
    cp rules/sandbox.md rules/commands.md ~/.claude/rules/
+   mkdir -p ~/.claude/skills && rm -rf ~/.claude/skills/no-email && cp -R plugins/no-email ~/.claude/skills/
    ```
 
    The first install saves your old settings in `settings.json.bak`. Move your own keys from there into `settings.jsonc`. Make every later change in `settings.jsonc` and repeat this step, because it overwrites `~/.claude/settings.json`.
@@ -70,7 +72,7 @@ Then ask Claude to run each command:
 | `cat .env`, in a project with a `.env` file | Refused |
 | `[ -z "${GITHUB_TOKEN-}" ] && echo removed`, if you export `GITHUB_TOKEN` | `removed` |
 
-Last, ask Claude to read `~/.zshrc` or another file in your home folder. It must refuse.
+Last, ask Claude to read `~/.zshrc` or another file in your home folder. It must refuse. Then ask it for your email address: it must not know it. If it does, the mod doesn't run; `claude --debug` shows a `no-email` line with the reason.
 
 If Claude asks to retry a test outside the sandbox, answer No. If `touch` succeeds, the sandbox is not running: delete `~/sandbox-probe` and fix the setup before you use Claude.
 

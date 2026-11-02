@@ -22,6 +22,8 @@ This also turns off feature flags, so Remote Control and a few extras stop worki
 
 The jsonc `env` block also reaches the Code tab's sessions in the Claude Desktop app. What the app itself sends is outside Claude Code's settings.
 
+Signed in with claude.ai, Claude Code adds your email address to the context of each conversation, and Claude has put it in request headers. The `no-email` mod removes it where it runs: [README](../README.md#install), step 2.
+
 Still sent:
 
 - Before each WebFetch, the hostname (not the full URL) goes to Anthropic for a safety check. `"skipWebFetchPreflight": true` turns this off, and the protection with it.

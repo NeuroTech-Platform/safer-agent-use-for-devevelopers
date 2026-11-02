@@ -89,13 +89,16 @@ These steps are written for SandVault 1.32.0.
 SandVault's account has its own home folder, so your `~/.claude` folder doesn't reach it. At each start, SandVault copies `/Users/Shared/sv-$USER/user/` into that home folder. In your daily account, from this repository's folder:
 
 ```bash
-mkdir -p "/Users/Shared/sv-$USER/user/.claude/rules" ~/.claude/rules
+mkdir -p "/Users/Shared/sv-$USER/user/.claude/rules" "/Users/Shared/sv-$USER/user/.claude/skills" ~/.claude/rules ~/.claude/skills
 grep -v '^[[:space:]]*//' settings.jsonc > "/Users/Shared/sv-$USER/user/.claude/settings.json"
 cp rules/*.md "/Users/Shared/sv-$USER/user/.claude/rules/"
+rm -rf "/Users/Shared/sv-$USER/user/.claude/skills/no-email" ~/.claude/skills/no-email
+cp -R plugins/no-email "/Users/Shared/sv-$USER/user/.claude/skills/"
+cp -R plugins/no-email ~/.claude/skills/
 cp rules/commands.md ~/.claude/rules/
 ```
 
-SandVault gets the settings and all three rules files, `sandvault.md` among them, which covers git in the synced copy. Your own account gets `commands.md`, whose rules hold without the sandbox. Repeat this after every change to `settings.jsonc` or a file in `rules/`.
+SandVault gets the settings, all three rules files, `sandvault.md` among them, which covers git in the synced copy, and the `no-email` mod, which runs there because SandVault signs in with a token. Your own account gets `commands.md`, whose rules hold without the sandbox, and the mod, which runs there unless you sign in with a Team or Enterprise account: [README](../README.md#install), step 2. Repeat this after every change to `settings.jsonc` or a file in `rules/`.
 
 > [!NOTE]
 > Claude Code in VS Code, in the Claude Desktop app, or started with `claude` in a terminal, runs as you, outside SandVault, with no sandbox unless you install the settings in your own account too: [README](../README.md#install), step 2. That step also installs `sandbox.md` there, which only makes sense under the sandbox, and not `sandvault.md`.
